@@ -52,6 +52,7 @@ QQ、163、126 等邮箱要先在网页版设置里开启 IMAP/SMTP，并用 **�
 
 ## 开发
 - 架构与约定：`AGENTS.md`；发版：`docs/release.md`。
+- 本地 macOS 应用与 DMG：`cargo xtask package`（见 `docs/local-build.md`）；预览 logo：`cargo xtask icon`。
 - 提交前：`cargo xtask ci`（fmt、clippy -D warnings、测试、分层检查）。
 
 ## 致谢

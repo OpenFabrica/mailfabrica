@@ -52,6 +52,7 @@ Command line: `docs/cli.md`. MCP: `docs/mcp.md`. Control channel: `docs/control-
 
 ## Development
 - Architecture and conventions: `AGENTS.md`; releases: `docs/release.md`.
+- Local macOS app and DMG: `cargo xtask package` (see `docs/local-build.md`); logo preview: `cargo xtask icon`.
 - Before committing: `cargo xtask ci` (fmt, clippy -D warnings, tests, layer check).
 
 ## Acknowledgements

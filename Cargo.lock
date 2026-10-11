@@ -4582,6 +4582,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiny-skia"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47ffee5eaaf5527f630fb0e356b90ebdec84d5d18d937c5e440350f88c5a91ea"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "bytemuck",
+ "cfg-if",
+ "log",
+ "png",
+ "tiny-skia-path",
+]
+
+[[package]]
 name = "tiny-skia-path"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5853,6 +5868,8 @@ name = "xtask"
 version = "0.1.0-dev"
 dependencies = [
  "serde_json",
+ "tempfile",
+ "tiny-skia",
 ]
 
 [[package]]

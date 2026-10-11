@@ -5,7 +5,10 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod icon;
 mod layers;
+#[cfg(target_os = "macos")]
+mod package;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -16,6 +19,8 @@ usage: cargo xtask <command>
 commands:
   ci              fmt --check, clippy -D warnings, test, layers (stops at the first failure)
   layers          enforce the crate dependency layering
+  package         build and verify a local macOS app and DMG
+  icon            render the original app logo to dist/MailFabrica-logo.png
 ";
 
 /// 入口：分派子命令，失败时打印错误并以非零码退出。
@@ -24,6 +29,8 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("layers") => cmd_layers(),
         Some("ci") => cmd_ci(),
+        Some("package") => cmd_package(),
+        Some("icon") => cmd_icon(),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())
@@ -37,6 +44,28 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// 本地打包只支持 macOS，不执行版本推进、安装、推送或发布。
+fn cmd_package() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        package::build()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("cargo xtask package currently supports macOS only".into())
+    }
+}
+
+/// 单独生成 logo 预览，不编译桌面程序。
+fn cmd_icon() -> Result<(), String> {
+    let dist = root().join("dist");
+    std::fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
+    let path = dist.join("MailFabrica-logo.png");
+    icon::render(1024, &path)?;
+    println!("Logo: {}", path.display());
+    Ok(())
 }
 
 /// 工作区根目录（xtask crate 的上一级）。
