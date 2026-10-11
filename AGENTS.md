@@ -10,6 +10,7 @@ egui/eframe 界面、一切皆命令、控制通道、MCP、`cargo xtask`。
 | L0 | `core` | 类型：地址、账户、服务商预设、文件夹、邮件元数据、日期、错误、密码存储接口 |
 | L1 | `mime` | 解析原始邮件 → 元数据/阅读视图；组装待发送邮件；引用/转发正文 |
 | L1 | `proto` | 阻塞式 IMAP4rev1 + SMTP 客户端（rustls，不用异步运行时） |
+| L1 | `rich` | 富文本模型 `RichDoc`（写信超文本正文；HTML 互转；位置都是字符下标） |
 | L2 | `store` | 本地存储：每账户一个目录，JSON 索引 + `.eml` 原文 + 联系人 |
 | L3 | `sync` | 后台工作线程（每账户一条），`Connector`/`Remote` 抽象，内存假服务器 `FakeConnector` |
 | L4 | `html` | HTML 邮件渲染：blitz（Stylo + Taffy）排版、vello_cpu 画成图块，专用线程；远程图片用 ureq 下载 |

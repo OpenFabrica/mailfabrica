@@ -18,8 +18,9 @@
 //!   打开主题组：选中组里全部邮件、不聚焦单封；返回组摘要 `{group, subject, count, unread, flagged, keys}`。
 //! - `view.groups` (query) — `{enabled, rows, open, groups: [组摘要]}`：是否按主题归类、行数、打开的组、全部主题组。
 //! - `view.next` / `view.prev` — 选中列表里的下一行/上一行（主题组算一行，选中就打开整组）。快捷键 ↓/↑（UI 负责）。
-//! - `message.list` (query) — `{account?, folder?, limit?, offset?, unreadOnly?}`，不给范围就用当前视图；只给账户时为它的收件箱。
-//!   返回 `{total, messages}`。
+//! - `message.list` (query) — `{account?, folder?, limit?, offset?, unreadOnly?, group?}`，不给范围就用当前视图；只给账户时为它的收件箱。
+//!   返回 `{total, messages}`。`group: true` 时按主题归类，返回 `{total（行数）, messageTotal, rows}`，
+//!   每行 `{group, count, unread, flagged, senders, keys, message（最新一封）}`，分页按行算。
 //! - `message.get` (query) — `{key}` → `{meta, body?: MessageView, state: "ready"|"loading"|"missing"|"failed"}`。
 //! - `message.open` — `{key?}` 下载正文（如本地没有）。
 //! - `message.markRead` — `{keys?, read?: bool = true}`。
@@ -52,6 +53,7 @@
 //! - `compose.setHtml` — `{id, html}` 用 HTML 整体替换正文（自动切到超文本）。
 //! - `compose.attach` — `{id, path}` 或 `{id, name, base64}`。
 //! - `compose.removeAttachment` — `{id, index}`。
+//! - `compose.removeQuote` — `{id}` 去掉原文引用（超文本回复/转发 HTML 邮件时，原文是只读的 `Compose::quote`）。
 //! - `compose.send` — `{id}`：校验收件人，组装，后台发送；成功后关闭窗口，原邮件加已回复标记，记联系人。
 //! - `compose.saveDraft` — `{id}` 存到草稿箱。
 //! - `compose.discard` — `{id}`。
