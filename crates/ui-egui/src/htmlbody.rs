@@ -38,7 +38,7 @@ impl HtmlPane {
     }
 
     /// 按可用宽度画出来。渲染器失败时返回 `Err`（调用方改用别的显示方式）；点了链接返回 `Ok(Some(地址))`。
-    pub fn show(&mut self, ui: &mut Ui) -> Result<Option<String>, String> {
+    pub fn show(&mut self, ui: &mut Ui, lang: crate::i18n::Language) -> Result<Option<String>, String> {
         let t = Tokens::get(ui.ctx());
         if let Some(e) = self.html.failed() {
             return Err(e.to_string());
@@ -47,9 +47,16 @@ impl HtmlPane {
         let ppp = ui.ctx().pixels_per_point();
         self.html.set_size(width, ppp);
         let mut open = None;
-        for ev in self.html.poll() {
+        let events = self.html.poll();
+        if let Some(e) = self.html.failed() {
+            return Err(e.to_string());
+        }
+        for ev in events {
             match ev {
                 Event::Tile(tile) => {
+                    if self.html.layout().is_none_or(|l| tile.generation != l.generation) {
+                        continue;
+                    }
                     let img = egui::ColorImage::from_rgba_premultiplied([tile.width as usize, tile.height as usize], &tile.rgba);
                     let tex = ui.ctx().load_texture(format!("mail-html-{}", tile.index), img, TextureOptions::LINEAR);
                     self.textures.insert(tile.index, (tile.generation, tex));
@@ -64,7 +71,10 @@ impl HtmlPane {
         }
         let Some(layout) = self.html.layout() else {
             // 还没排好（第一次通常几十毫秒）：先占一块地方，避免下面的内容跳动
-            ui.add_space(40.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(lang.t("Rendering message…"));
+            });
             return Ok(None);
         };
         let (rect, resp) = ui.allocate_exact_size(vec2(width, layout.height), Sense::click_and_drag());
@@ -131,8 +141,9 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, 
         let pane = HtmlPane::new(ui.ctx(), html, app.session.inline_parts(key));
         app.reader.html = Some(HtmlBody { key: key.clone(), view: v.clone(), pane });
     }
+    let lang = app.lang();
     let Some(b) = app.reader.html.as_mut() else { return false };
-    match b.pane.show(ui) {
+    match b.pane.show(ui, lang) {
         Ok(open) => {
             if let Some(url) = open {
                 app.defer("ui.openUrl", json!({"url": url}));

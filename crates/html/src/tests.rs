@@ -8,6 +8,69 @@ fn offline() -> Options {
     Options { remote_images: false, inline: vec![], wake: Arc::new(|| {}) }
 }
 
+/// 邮件布局表格 border=0 必须没有黑框；嵌套的单元格也一样。
+#[test]
+fn borderless_email_tables_have_no_black_frames() {
+    let html = r#"<style>table {border-collapse:collapse}</style><body style="margin:0;background:white"><table border="0" cellpadding="0" cellspacing="0" width="300"><tr><td>
+        <table border="0" cellpadding="0" cellspacing="0" width="300"><tr><td style="height:80px;background:white"></td></tr></table>
+        </td></tr></table></body>"#;
+    let start = Instant::now();
+    let mut v = HtmlView::new(html, offline());
+    v.set_size(400.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    v.request_tile(0);
+    let ev = pump(&mut v, |_, ev| ev.iter().any(|e| matches!(e, Event::Tile(_))));
+    let tile = ev.into_iter().find_map(|e| if let Event::Tile(t) = e { Some(t) } else { None }).expect("tile");
+    let dark = tile.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 0 && p[0] < 100 && p[1] < 100 && p[2] < 100).count();
+    eprintln!("borderless table: {dark} dark pixels, first tile {:?}", start.elapsed());
+    assert_eq!(dark, 0, "border=0 layout tables must not paint dark borders");
+    assert!((v.layout().expect("layout").height - 80.0).abs() < 1.0, "cellspacing=0 must not add gaps: {:?}", v.layout());
+}
+
+/// 表格单元格的显式单边装饰只画在指定边上，不能蔓延成整张表的边框。
+#[test]
+fn table_cell_top_border_does_not_frame_the_table() {
+    let html = r#"<style>table{border-collapse:collapse}</style><body style="margin:0;background:white">
+        <table border="0" cellspacing="0" cellpadding="0" width="300"><tr><td style="height:80px;border-top:10px solid #ff8000"></td></tr></table></body>"#;
+    let mut v = HtmlView::new(html, offline());
+    v.set_size(400.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    v.request_tile(0);
+    let events = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Tile(_))));
+    let tile = events.into_iter().find_map(|e| if let Event::Tile(t) = e { Some(t) } else { None }).expect("tile");
+    let pixel = |x: u32, y: u32| tile.rgba.get(((y * tile.width + x) * 4) as usize..((y * tile.width + x) * 4 + 3) as usize);
+    assert_eq!(pixel(150, 5), Some(&[255, 128, 0][..]), "authored orange top border");
+    assert_eq!(pixel(1, 40), Some(&[255, 255, 255][..]), "no invented left border");
+    assert_eq!(pixel(298, 40), Some(&[255, 255, 255][..]), "no invented right border");
+}
+
+/// cellspacing/cellpadding 非零值仍生效，作者 CSS 可以覆盖旧式属性。
+#[test]
+fn legacy_table_spacing_and_padding_respect_author_css() {
+    for (style, expected) in [("", 94.0), ("table{border-spacing:0}td{padding:2px}", 84.0)] {
+        let html = format!(
+            r#"<style>{style}</style><body style="margin:0"><table cellspacing="3" cellpadding="4"><tr><td><div style="height:80px;width:100px"></div></td></tr></table></body>"#
+        );
+        let mut v = HtmlView::new(&html, offline());
+        v.set_size(400.0, 1.0);
+        pump(&mut v, |v, _| v.layout().is_some());
+        assert!((v.layout().expect("layout").height - expected).abs() < 1.0, "{:?}", v.layout());
+    }
+}
+
+/// 纹理被界面淘汰后，再请求同一代同一图块仍能得到像素，避免长信滚回顶部空白。
+#[test]
+fn tile_can_be_requested_again_after_delivery() {
+    let mut v = HtmlView::new("<body style='margin:0'><p>Hello</p><div style='height:2000px'></div></body>", offline());
+    v.set_size(400.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    for _ in 0..2 {
+        v.request_tile(0);
+        let events = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Tile(t) if t.index == 0)));
+        assert!(events.iter().any(|e| matches!(e, Event::Tile(t) if t.index == 0)), "tile was permanently marked as requested");
+    }
+}
+
 /// 一直 poll 到 `done` 为真或超时，返回期间收到的事件。
 fn pump(v: &mut HtmlView, mut done: impl FnMut(&HtmlView, &[Event]) -> bool) -> Vec<Event> {
     let start = Instant::now();

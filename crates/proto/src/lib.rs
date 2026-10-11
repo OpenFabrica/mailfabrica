@@ -266,6 +266,11 @@ impl ImapClient {
             .ok_or_else(|| MailError::NotFound(format!("message uid {uid}")))
     }
 
+    /// 批量取全文，不改变已读状态；返回服务器实际给出的 UID，已消失的邮件不在结果中。
+    pub fn fetch_full_batch(&mut self, uids: &[u32]) -> Result<Vec<Fetched>> {
+        self.fetch_items(uids, "UID FLAGS RFC822.SIZE BODY.PEEK[]")
+    }
+
     /// `UID STORE <set> +FLAGS.SILENT (...)` 或 `-FLAGS.SILENT`。
     pub fn store(&mut self, uids: &[u32], flag: Flag, on: bool) -> Result<()> {
         let sign = if on { '+' } else { '-' };

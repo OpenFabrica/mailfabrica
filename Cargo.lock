@@ -2499,6 +2499,7 @@ dependencies = [
  "blitz-traits",
  "image",
  "log",
+ "parley",
  "rustls",
  "ureq",
 ]

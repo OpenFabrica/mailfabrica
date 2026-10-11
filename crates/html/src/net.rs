@@ -7,8 +7,8 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use blitz_traits::net::{Bytes, NetHandler, NetProvider, Request};
@@ -26,6 +26,13 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 struct Job {
     url: String,
     handler: Box<dyn NetHandler>,
+    signal: Option<blitz_traits::net::AbortSignal>,
+}
+
+/// 远程资源的进程内缓存，只在允许联网的预览之间共享。
+fn cache() -> &'static Mutex<crate::resources::ResourceCache> {
+    static CACHE: OnceLock<Mutex<crate::resources::ResourceCache>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
 }
 
 /// 队列和"已关闭"标志。
@@ -52,6 +59,7 @@ impl MailNet {
     /// `inline`：Content-ID（不带尖括号）→ 数据；`remote` 为假时不联网。
     pub(crate) fn new(inline: HashMap<String, Vec<u8>>, remote: bool) -> MailNet {
         let queue: Arc<(Mutex<Queue>, Condvar)> = Arc::default();
+        let mut running = 0;
         if remote {
             let agent = agent();
             for i in 0..THREADS {
@@ -59,10 +67,12 @@ impl MailNet {
                 let spawned = std::thread::Builder::new().name(format!("mail-net-{i}")).spawn(move || worker(&q, &agent));
                 if let Err(e) = spawned {
                     log::warn!("cannot start image download thread: {e}");
+                } else {
+                    running += 1;
                 }
             }
         }
-        MailNet { queue, inline: Arc::new(inline), remote, count: AtomicUsize::new(0) }
+        MailNet { queue, inline: Arc::new(inline), remote: remote && running > 0, count: AtomicUsize::new(0) }
     }
 }
 
@@ -97,7 +107,12 @@ impl NetProvider for MailNet {
             }
             "http" | "https" if self.remote => {
                 let (m, cv) = &*self.queue;
-                lock(m).jobs.push_back(Job { url, handler });
+                let cached = lock(cache()).get(&url, Instant::now());
+                if let Some(data) = cached {
+                    handler.bytes(url, data);
+                    return;
+                }
+                lock(m).jobs.push_back(Job { url, handler, signal: request.signal });
                 cv.notify_one();
             }
             _ => handler.bytes(url, Bytes::new()),
@@ -147,6 +162,12 @@ pub(crate) fn decode_data_url(url: &str) -> Option<Vec<u8>> {
 /// 下载用的 HTTP 客户端：aws-lc-rs 后端的 rustls，webpki 根证书，限时，不带 Cookie。
 /// 只连公网地址（见 [`PublicOnly`]），不用环境变量里的代理（代理会替我们去连内网）。
 fn agent() -> ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(new_agent).clone()
+}
+
+/// 创建可跨预览复用连接的 HTTP 客户端，公网地址校验仍在每次连接和重定向时执行。
+fn new_agent() -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder().unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider())).build();
     let config = ureq::Agent::config_builder()
         .tls_config(tls)
@@ -243,11 +264,24 @@ fn worker(queue: &(Mutex<Queue>, Condvar), agent: &ureq::Agent) {
                 q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
             }
         };
-        let data = download(agent, &job.url).unwrap_or_else(|e| {
-            log::info!("image {}: {e}", job.url);
-            Vec::new()
+        if job.signal.as_ref().is_some_and(|s| s.aborted()) {
+            continue;
+        }
+        // 同一封邮件中的重复 URL 也可命中先前完成的下载。
+        let cached = lock(cache()).get(&job.url, Instant::now());
+        let data = cached.unwrap_or_else(|| {
+            let data = Bytes::from(download(agent, &job.url).unwrap_or_else(|e| {
+                // 不把带签名、追踪令牌的完整 URL 写进日志。
+                log::debug!("mail image download failed: {e}");
+                Vec::new()
+            }));
+            lock(cache()).insert(job.url.clone(), data.clone(), Instant::now());
+            data
         });
-        job.handler.bytes(job.url, Bytes::from(data));
+        let closed = lock(m).closed;
+        if !closed && !job.signal.as_ref().is_some_and(|s| s.aborted()) {
+            job.handler.bytes(job.url, data);
+        }
     }
 }
 
@@ -260,4 +294,30 @@ fn download(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, String> {
         return Err("too large".into());
     }
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blitz_traits::net::Url;
+
+    /// 资源命中直接回调，禁用远程图片时即使有缓存也不显示它。
+    #[test]
+    fn cache_is_used_only_when_remote_images_are_enabled() {
+        struct Handler(std::sync::mpsc::Sender<Bytes>);
+        impl NetHandler for Handler {
+            fn bytes(self: Box<Self>, _url: String, bytes: Bytes) {
+                let _ = self.0.send(bytes);
+            }
+        }
+        let url = "https://cache-test.invalid/mail-image.png";
+        lock(cache()).insert(url.into(), Bytes::from_static(b"cached image"), Instant::now());
+        for remote in [true, false] {
+            let net = MailNet::new(HashMap::new(), remote);
+            let (tx, rx) = std::sync::mpsc::channel();
+            net.fetch(0, Request::get(Url::parse(url).expect("url")), Box::new(Handler(tx)));
+            let result = rx.recv_timeout(Duration::from_millis(100)).expect("immediate callback");
+            assert_eq!(result.as_ref(), if remote { b"cached image".as_slice() } else { &[] });
+        }
+    }
 }

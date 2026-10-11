@@ -164,6 +164,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Display name", "显示名"),
     ("Don't Save", "不保存"),
     ("Downloading message…", "正在下载邮件…"),
+    ("Rendering message…", "正在渲染邮件…"),
     ("Drafts", "草稿箱"),
     ("Earlier", "更早"),
     ("Email", "邮箱"),

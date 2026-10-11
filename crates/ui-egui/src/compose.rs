@@ -528,7 +528,7 @@ fn quote_view(app: &mut MailApp, ui: &mut Ui, id: u64, q: &ComposeQuote) {
         app.composer.quotes.insert(id, (q.html.clone(), HtmlPane::new(ui.ctx(), &doc, inline)));
     }
     let Some((_, pane)) = app.composer.quotes.get_mut(&id) else { return };
-    match pane.show(ui) {
+    match pane.show(ui, lang) {
         Ok(Some(url)) => app.open_url(&url),
         Ok(None) => {}
         Err(e) => {

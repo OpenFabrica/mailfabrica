@@ -92,6 +92,15 @@ impl Remote for NetRemote {
         Ok(self.imap.fetch_full(uid)?.body)
     }
 
+    /// 同一 FETCH 命令取一小批正文，避免预取每封都付出一次网络往返。
+    fn fetch_raw_batch(&mut self, folder: &str, uids: &[u32]) -> Result<Vec<(u32, Vec<u8>)>> {
+        if uids.is_empty() {
+            return Ok(vec![]);
+        }
+        self.select(folder)?;
+        Ok(self.imap.fetch_full_batch(uids)?.into_iter().map(|f| (f.uid, f.body)).collect())
+    }
+
     fn set_flag(&mut self, folder: &str, uids: &[u32], flag: Flag, on: bool) -> Result<()> {
         if uids.is_empty() {
             return Ok(());

@@ -446,6 +446,23 @@ fn imap_fetch_full_and_not_found() {
     finish(h);
 }
 
+/// 多封正文只用一次 FETCH；响应可以乱序、漏掉已删除的 UID，且必须使用 PEEK。
+#[test]
+fn imap_fetch_full_batch_uses_one_round_trip() {
+    let mut steps = login_steps("");
+    steps.extend([
+        c("A0003 UID FETCH 41:43 (UID FLAGS RFC822.SIZE BODY.PEEK[])"),
+        s("* 3 FETCH (UID 43 FLAGS () BODY[] {3}\r\nend)\r\n* 1 FETCH (BODY[] {5}\r\nfirst UID 41 FLAGS (\\Seen))\r\nA0003 OK\r\n"),
+    ]);
+    let (addr, handle) = fake_server(steps);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    client.login("user", "pass").unwrap();
+    let fetched = client.fetch_full_batch(&[43, 41, 42, 41]).unwrap();
+    assert_eq!(fetched.iter().map(|f| (f.uid, f.body.as_slice())).collect::<Vec<_>>(), vec![(41, b"first".as_slice()), (43, b"end".as_slice())]);
+    assert!(client.fetch_full_batch(&[]).unwrap().is_empty());
+    handle.join().unwrap().unwrap();
+}
+
 #[test]
 fn imap_store_and_move_with_move_cap() {
     let mut steps = login_steps("MOVE");

@@ -102,6 +102,20 @@ fn sync_limit_takes_newest() {
     assert!(!evs.iter().any(|e| matches!(e, Event::Body { .. })));
 }
 
+/// 服务器按 UID 升序返回邮件头时，有限的预取预算仍必须留给最新邮件。
+#[test]
+fn prefetch_uses_newest_messages_first() {
+    let fake = FakeConnector::empty("pw");
+    for i in 0..12 {
+        fake.deliver("INBOX", raw(&format!("m{i}")));
+    }
+    let worker = Worker::new(Arc::new(fake));
+    worker.submit(job(JobKind::Sync { known: HashMap::new(), limit: 500, prefetch: 3 }));
+    let events = worker.wait_idle(WAIT);
+    let bodies: Vec<u32> = events.iter().filter_map(|e| if let Event::Body { key, .. } = e { Some(key.uid) } else { None }).collect();
+    assert_eq!(bodies, vec![12, 11, 10]);
+}
+
 #[test]
 fn auth_failure_and_offline() {
     let fake = FakeConnector::empty("pw");
@@ -280,4 +294,108 @@ fn wait_idle_times_out_and_poll_is_nonblocking() {
     assert_eq!(w.busy_accounts(), vec!["me-example-com".to_string()]);
     w.wait_idle(WAIT);
     assert!(w.busy_accounts().is_empty());
+}
+
+/// 打开正文只等当前网络请求，不能等全部文件夹同步和预取结束。
+#[test]
+fn opened_body_is_serviced_during_sync() {
+    use std::sync::mpsc;
+    struct SlowConnector {
+        inner: FakeConnector,
+        started: Sender<()>,
+        release: Mutex<Option<Receiver<()>>>,
+        headers_release: Mutex<Option<Receiver<()>>>,
+    }
+    struct SlowRemote {
+        inner: Box<dyn Remote>,
+        started: Sender<()>,
+        release: Receiver<()>,
+        headers_release: Receiver<()>,
+    }
+    impl Connector for SlowConnector {
+        fn connect(&self, a: &AccountConfig, p: &str) -> Result<Box<dyn Remote>> {
+            Ok(Box::new(SlowRemote {
+                inner: self.inner.connect(a, p)?,
+                started: self.started.clone(),
+                release: lock(&self.release).take().expect("one connection"),
+                headers_release: lock(&self.headers_release).take().expect("one connection"),
+            }))
+        }
+        fn probe_smtp(&self, server: &ServerConfig) -> Result<()> {
+            self.inner.probe_smtp(server)
+        }
+    }
+    impl Remote for SlowRemote {
+        fn list_folders(&mut self) -> Result<Vec<Folder>> {
+            let _ = self.started.send(());
+            let _ = self.release.recv_timeout(WAIT);
+            self.inner.list_folders()
+        }
+        fn folder_uids(&mut self, f: &str) -> Result<(u32, Vec<u32>)> {
+            self.inner.folder_uids(f)
+        }
+        fn fetch_headers(&mut self, f: &str, u: &[u32]) -> Result<Vec<(u32, Flags, u32, Vec<u8>)>> {
+            let _ = self.headers_release.recv_timeout(WAIT);
+            self.inner.fetch_headers(f, u)
+        }
+        fn fetch_flags(&mut self, f: &str, u: &[u32]) -> Result<Vec<(u32, Flags)>> {
+            self.inner.fetch_flags(f, u)
+        }
+        fn fetch_raw(&mut self, f: &str, u: u32) -> Result<Vec<u8>> {
+            self.inner.fetch_raw(f, u)
+        }
+        fn set_flag(&mut self, f: &str, u: &[u32], fl: Flag, on: bool) -> Result<()> {
+            self.inner.set_flag(f, u, fl, on)
+        }
+        fn move_to(&mut self, f: &str, u: &[u32], d: &str) -> Result<()> {
+            self.inner.move_to(f, u, d)
+        }
+        fn delete(&mut self, f: &str, u: &[u32]) -> Result<()> {
+            self.inner.delete(f, u)
+        }
+        fn append(&mut self, f: &str, fl: Flags, r: &[u8]) -> Result<()> {
+            self.inner.append(f, fl, r)
+        }
+        fn create_folder(&mut self, f: &str) -> Result<()> {
+            self.inner.create_folder(f)
+        }
+        fn send(&mut self, f: &str, r: &[String], raw: &[u8]) -> Result<()> {
+            self.inner.send(f, r, raw)
+        }
+    }
+    let fake = FakeConnector::empty("pw");
+    let uid = fake.deliver("INBOX", raw("open-me"));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (headers_tx, headers_rx) = mpsc::channel();
+    let w = Worker::new(Arc::new(SlowConnector {
+        inner: fake,
+        started: started_tx,
+        release: Mutex::new(Some(release_rx)),
+        headers_release: Mutex::new(Some(headers_rx)),
+    }));
+    w.submit(job(JobKind::Sync { known: HashMap::new(), limit: 500, prefetch: 1 }));
+    started_rx.recv_timeout(WAIT).expect("sync started");
+    w.submit(job(JobKind::FetchBody { folder: "INBOX".into(), uid }));
+    release_tx.send(()).expect("release folder list");
+    let start = Instant::now();
+    let mut events = Vec::new();
+    while start.elapsed() < Duration::from_millis(500) {
+        events.extend(w.poll());
+        if events.iter().any(|e| matches!(e, Event::Body { key, .. } if key.uid == uid)) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let ready = events.iter().any(|e| matches!(e, Event::Body { key, .. } if key.uid == uid));
+    let _ = headers_tx.send(());
+    events.extend(w.wait_idle(WAIT));
+    assert!(ready, "opened body waited behind the entire sync job");
+    assert_eq!(
+        events.iter().filter(|e| matches!(e, Event::Body { key, .. } if key.uid == uid)).count(),
+        1,
+        "opened body must not be prefetched again"
+    );
+    assert_eq!(dones(&events).iter().filter(|(kind, _)| *kind == "fetchBody").count(), 1);
+    assert!(dones(&events).iter().all(|(_, r)| r.is_ok()));
 }

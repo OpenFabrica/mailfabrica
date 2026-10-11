@@ -11,13 +11,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod compat;
 mod net;
+mod resources;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use anyrender::render_to_buffer;
+use anyrender::ImageRenderer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{BaseDocument, DEFAULT_CSS, DocumentConfig, Point, local_name};
 use blitz_html::HtmlDocument;
@@ -43,6 +45,17 @@ body { margin: 8px; font-family: Arial, Helvetica, "PingFang SC", "Hiragino Sans
 a:not([href]) { color: inherit; text-decoration: none; cursor: auto; }
 table[align="center" i] { margin-left: auto; margin-right: auto; }
 "#;
+
+/// 系统字体目录只发现一次；共享字体文件缓存，每封信保留独立的字体集合以隔离远程字体。
+fn font_context() -> parley::FontContext {
+    static FONTS: std::sync::OnceLock<std::sync::Mutex<parley::FontContext>> = std::sync::OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut fonts = parley::FontContext::new();
+        fonts.source_cache.make_shared();
+        std::sync::Mutex::new(fonts)
+    });
+    fonts.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// 打开一个 [`HtmlView`] 的选项。
 pub struct Options {
@@ -73,7 +86,7 @@ impl Layout {
     }
 }
 
-/// 一块画好的图：从 `index * TILE_HEIGHT` 开始的一条，RGBA8（未预乘），`width`×`height` 物理像素。
+/// 一块画好的图：RGBA8 预乘像素，尺寸为物理像素。
 pub struct Tile {
     pub generation: u64,
     pub index: u32,
@@ -187,7 +200,11 @@ impl HtmlView {
                     self.layout = Some(l);
                     self.requested.retain(|(g, _)| *g == l.generation);
                 }
-                Reply::Tile(t) => out.push(Event::Tile(t)),
+                Reply::Tile(t) => {
+                    // 只去重正在绘制的请求。界面释放远处纹理后，滚回来必须能再次请求。
+                    self.requested.remove(&(t.generation, t.index));
+                    out.push(Event::Tile(t));
+                }
                 Reply::Hover(h) => self.hover = h,
                 Reply::Selection(s) => self.selection = s,
                 Reply::OpenLink(u) => out.push(Event::OpenLink(u)),
@@ -267,6 +284,8 @@ struct Worker {
     press: Option<(Option<String>, f32, f32, bool)>,
     /// 链接区域（每次排版后重算）：([左, 上, 右, 下] 的列表, 地址)。
     links: Vec<(Vec<[f32; 4]>, String)>,
+    /// 同尺寸图块复用光栅器和已解码图片缓存，避免每块重新初始化。
+    painter: Option<(u32, u32, VelloCpuImageRenderer)>,
 }
 
 /// 渲染线程主循环：一次取完所有排队的命令，合并后处理（只按最后一次的宽度排版，只画当前代的图块）。
@@ -281,6 +300,7 @@ fn run(html: String, options: Options, rx: Receiver<Cmd>, reply: Sender<Reply>, 
         hover: None,
         press: None,
         links: Vec::new(),
+        painter: None,
     };
     while let Ok(first) = rx.recv() {
         let mut cmds = vec![first];
@@ -337,7 +357,10 @@ impl Worker {
         let viewport = Viewport::new((width * scale).round() as u32, (VIEWPORT_HEIGHT * scale).round() as u32, scale, ColorScheme::Light);
         let doc = match &mut self.doc {
             Some(d) => {
-                d.as_mut().set_viewport(viewport);
+                // 图片到达只需处理资源，不改变视口；重复 set_viewport 会触发完整样式重算。
+                if self.layout.is_none_or(|l| l.width != width || l.scale != scale) {
+                    d.as_mut().set_viewport(viewport);
+                }
                 d
             }
             None => {
@@ -348,9 +371,12 @@ impl Worker {
                     ua_stylesheets: Some(vec![DEFAULT_CSS.to_string(), MAIL_CSS.to_string()]),
                     net_provider: Some(Arc::new(net::MailNet::new(inline, self.options.remote_images))),
                     shell_provider: Some(self.shell.clone()),
+                    font_ctx: Some(font_context()),
                     ..Default::default()
                 };
-                self.doc.insert(HtmlDocument::from_html(&std::mem::take(&mut self.html), config))
+                let mut doc = HtmlDocument::from_html(&std::mem::take(&mut self.html), config);
+                compat::apply(doc.as_mut());
+                self.doc.insert(doc)
             }
         };
         let base = doc.as_mut();
@@ -385,8 +411,14 @@ impl Worker {
         let (pw, ph) = ((l.width * l.scale).round() as u32, (h * l.scale).ceil().max(1.0) as u32);
         let base: &mut BaseDocument = doc.as_mut();
         base.set_viewport_scroll(Point { x: 0.0, y: f64::from(top) });
-        let rgba =
-            render_to_buffer::<VelloCpuImageRenderer, _>(|scene| blitz_paint::paint_scene(scene, base, f64::from(l.scale), pw, ph, 0, 0), pw, ph);
+        let (old_width, old_height, painter) = self.painter.get_or_insert_with(|| (pw, ph, VelloCpuImageRenderer::new(pw, ph)));
+        if (*old_width, *old_height) != (pw, ph) {
+            painter.resize(pw, ph);
+            (*old_width, *old_height) = (pw, ph);
+        }
+        painter.reset();
+        let mut rgba = Vec::new();
+        painter.render_to_vec(|scene| blitz_paint::paint_scene(scene, base, f64::from(l.scale), pw, ph, 0, 0), &mut rgba);
         base.set_viewport_scroll(Point { x: 0.0, y: 0.0 });
         self.send(Reply::Tile(Tile { generation: l.generation, index, width: pw, height: ph, rgba }));
     }

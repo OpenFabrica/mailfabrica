@@ -11,6 +11,7 @@
 mod demo;
 pub mod fake;
 mod net;
+mod queue;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,6 +36,18 @@ pub trait Remote: Send {
     fn fetch_flags(&mut self, folder: &str, uids: &[u32]) -> Result<Vec<(u32, Flags)>>;
     /// 取整封邮件原文（不改变已读状态）。
     fn fetch_raw(&mut self, folder: &str, uid: u32) -> Result<Vec<u8>>;
+    /// 批量预取全文；默认逐封兼容现有实现。断线向上报告，已消失的邮件跳过。
+    fn fetch_raw_batch(&mut self, folder: &str, uids: &[u32]) -> Result<Vec<(u32, Vec<u8>)>> {
+        let mut out = Vec::new();
+        for &uid in uids {
+            match self.fetch_raw(folder, uid) {
+                Ok(raw) => out.push((uid, raw)),
+                Err(e) if transient(&e) => return Err(e),
+                Err(e) => log::warn!("prefetch {folder}/{uid}: {e}"),
+            }
+        }
+        Ok(out)
+    }
     fn set_flag(&mut self, folder: &str, uids: &[u32], flag: Flag, on: bool) -> Result<()>;
     fn move_to(&mut self, folder: &str, uids: &[u32], dest: &str) -> Result<()>;
     /// 彻底删除。
@@ -318,11 +331,12 @@ impl Worker {
 /// 工作线程主循环：按顺序执行任务，连接在任务之间复用。
 fn worker_loop(connector: Arc<dyn Connector>, rx: Receiver<(JobId, Job)>, events: Sender<Event>) {
     let mut conn: Option<Conn> = None;
-    while let Ok((id, job)) = rx.recv() {
+    let mut queue = queue::JobQueue::new(rx);
+    while let Some((id, job)) = queue.next() {
         let account = job.account.id.clone();
         let kind = job.kind.name();
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| execute(connector.as_ref(), &mut conn, &job, &events))).unwrap_or_else(|p| {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| execute(connector.as_ref(), &mut conn, &job, &events, &mut queue)))
+            .unwrap_or_else(|p| {
                 // panic 后连接状态未知，丢掉重连
                 conn = None;
                 let msg =
@@ -460,7 +474,7 @@ fn net_detail(e: &MailError) -> String {
 }
 
 /// 执行一个任务，返回给 `Done` 的摘要。
-fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events: &Sender<Event>) -> Result<String> {
+fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events: &Sender<Event>, queue: &mut queue::JobQueue) -> Result<String> {
     let account = job.account.id.as_str();
     match &job.kind {
         JobKind::Test => {
@@ -469,7 +483,9 @@ fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events
             with_remote(connector, conn, job, |_| Ok("ok".to_string()))
         }
         JobKind::Detect { imap, smtp } => detect(connector, conn, job, imap, smtp, events),
-        JobKind::Sync { known, limit, prefetch } => with_remote(connector, conn, job, |r| sync_all(r, account, known, *limit, *prefetch, events)),
+        JobKind::Sync { known, limit, prefetch } => with_remote(connector, conn, job, |r| {
+            sync_all(r, account, known, *limit, *prefetch, events, &mut |r| queue.service_bodies(r, job, events))
+        }),
         JobKind::FetchBody { folder, uid } => {
             let raw = with_remote(connector, conn, job, |r| r.fetch_raw(folder, *uid))?;
             let _ = events.send(Event::Body { key: MsgKey::new(account, folder.clone(), *uid), raw });
@@ -511,8 +527,18 @@ fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events
 }
 
 /// 同步全部文件夹，见 [`JobKind::Sync`]。返回摘要（新邮件数）。
-fn sync_all(r: &mut dyn Remote, account: &str, known: &HashMap<String, Known>, limit: u32, prefetch: u32, events: &Sender<Event>) -> Result<String> {
+fn sync_all(
+    r: &mut dyn Remote,
+    account: &str,
+    known: &HashMap<String, Known>,
+    limit: u32,
+    prefetch: u32,
+    events: &Sender<Event>,
+    service: &mut dyn FnMut(&mut dyn Remote) -> Result<Vec<MsgKey>>,
+) -> Result<String> {
+    let mut downloaded: HashSet<MsgKey> = service(r)?.into_iter().collect();
     let mut folders = r.list_folders()?;
+    downloaded.extend(service(r)?);
     for f in &mut folders {
         f.account = account.to_string();
     }
@@ -527,7 +553,8 @@ fn sync_all(r: &mut dyn Remote, account: &str, known: &HashMap<String, Known>, l
         let _ = events.send(Event::Progress { account: account.to_string(), progress });
         let empty = Known::default();
         let k = known.get(&f.path).unwrap_or(&empty);
-        new_total += sync_folder(r, account, &f.path, k, limit, &mut budget, events)?;
+        downloaded.extend(service(r)?);
+        new_total += sync_folder(r, account, &f.path, k, limit, &mut budget, events, service, &mut downloaded)?;
     }
     let _ = events.send(Event::Progress { account: account.to_string(), progress: Progress::Done { new: new_total } });
     Ok(format!("{new_total} new"))
@@ -542,9 +569,15 @@ fn sync_folder(
     limit: u32,
     budget: &mut u32,
     events: &Sender<Event>,
+    service: &mut dyn FnMut(&mut dyn Remote) -> Result<Vec<MsgKey>>,
+    downloaded: &mut HashSet<MsgKey>,
 ) -> Result<usize> {
     let (uidvalidity, server) = r.folder_uids(folder)?;
     let reset = known.uidvalidity != 0 && known.uidvalidity != uidvalidity;
+    if reset {
+        // 引擎会丢掉旧 epoch 的正文；即使同一 UID 刚被服务，也不能跳过新 epoch 的预取。
+        downloaded.retain(|key| key.account != account || key.folder != folder);
+    }
     let known_set: HashSet<u32> = if reset { HashSet::new() } else { known.uids.iter().copied().collect() };
     let server_set: HashSet<u32> = server.iter().copied().collect();
     // 只看服务器上最新的 `limit` 封：更早的邮件即使本地没有也不取，首次同步不会拖太久
@@ -555,6 +588,7 @@ fn sync_folder(
     let still: Vec<u32> = known_set.iter().copied().filter(|u| server_set.contains(u)).collect();
     let mut flags = Vec::new();
     for chunk in still.chunks(FLAG_BATCH) {
+        downloaded.extend(service(r)?);
         flags.extend(r.fetch_flags(folder, chunk)?);
     }
     let changed = reset || !vanished.is_empty() || !flags.is_empty() || known.uidvalidity != uidvalidity;
@@ -568,7 +602,9 @@ fn sync_folder(
     let mut first = true;
     let mut to_prefetch = Vec::new();
     for chunk in new.chunks(HEADER_BATCH) {
-        let heads = r.fetch_headers(folder, chunk)?;
+        downloaded.extend(service(r)?);
+        let mut heads = r.fetch_headers(folder, chunk)?;
+        heads.sort_unstable_by_key(|(uid, ..)| std::cmp::Reverse(*uid));
         let mut metas = Vec::with_capacity(heads.len());
         for (uid, f, size, header) in heads {
             if *budget > 0 && size < PREFETCH_MAX_SIZE {
@@ -590,14 +626,22 @@ fn sync_folder(
         });
         first = false;
     }
-    for uid in to_prefetch {
-        match r.fetch_raw(folder, uid) {
-            Ok(raw) => {
-                let _ = events.send(Event::Body { key: MsgKey::new(account, folder, uid), raw });
+    // 小批量减少 IMAP 往返，同时限制一批最多约 4 MiB，检查点仍可及时服务用户打开的正文。
+    for chunk in to_prefetch.chunks(8) {
+        downloaded.extend(service(r)?);
+        let wanted: Vec<u32> = chunk.iter().copied().filter(|uid| !downloaded.contains(&MsgKey::new(account, folder, *uid))).collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        match r.fetch_raw_batch(folder, &wanted) {
+            Ok(bodies) => {
+                for (uid, raw) in bodies {
+                    let _ = events.send(Event::Body { key: MsgKey::new(account, folder, uid), raw });
+                }
             }
             // 预取失败不影响同步结果，打开时再下载；断线类错误要往上抛以便重连
             Err(e) if transient(&e) => return Err(e),
-            Err(e) => log::warn!("prefetch {folder}/{uid}: {e}"),
+            Err(e) => log::warn!("prefetch batch in {folder}: {e}"),
         }
     }
     Ok(new.len())
