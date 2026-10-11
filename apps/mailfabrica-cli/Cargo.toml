@@ -1,0 +1,20 @@
+[package]
+name = "mailfabrica-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "MailFabrica command line: accounts, sync, list, read, send and an MCP server, without a window"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mailfabrica-cli"
+path = "src/main.rs"
+
+[dependencies]
+mailfabrica-engine = { workspace = true }
+mailfabrica-mcp = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

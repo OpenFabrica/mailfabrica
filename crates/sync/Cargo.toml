@@ -1,0 +1,15 @@
+[package]
+name = "mailfabrica-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MailFabrica sync: background workers that talk to IMAP/SMTP (or an in-memory fake) and report events"
+
+[lints]
+workspace = true
+
+[dependencies]
+mailfabrica-core = { workspace = true }
+mailfabrica-mime = { workspace = true }
+mailfabrica-proto = { workspace = true }
+log = { workspace = true }

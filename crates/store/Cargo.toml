@@ -1,0 +1,19 @@
+[package]
+name = "mailfabrica-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MailFabrica local store: accounts, folder indexes, raw messages and contacts on disk"
+
+[lints]
+workspace = true
+
+[dependencies]
+mailfabrica-core = { workspace = true }
+mailfabrica-mime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
