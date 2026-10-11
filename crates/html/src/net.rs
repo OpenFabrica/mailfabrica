@@ -5,6 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -144,16 +145,86 @@ pub(crate) fn decode_data_url(url: &str) -> Option<Vec<u8>> {
 }
 
 /// 下载用的 HTTP 客户端：aws-lc-rs 后端的 rustls，webpki 根证书，限时，不带 Cookie。
+/// 只连公网地址（见 [`PublicOnly`]），不用环境变量里的代理（代理会替我们去连内网）。
 fn agent() -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder().unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider())).build();
-    ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .tls_config(tls)
+        .proxy(None)
         .timeout_global(Some(TIMEOUT))
         .max_redirects(5)
         .user_agent("Mozilla/5.0 (MailFabrica)")
         .http_status_as_error(true)
-        .build()
-        .new_agent()
+        .build();
+    ureq::Agent::with_parts(config, ureq::unversioned::transport::DefaultConnector::default(), PublicOnly::default())
+}
+
+/// 域名解析时丢掉非公网地址。邮件是别人写的：`<img src="http://192.168.1.1/...">` 这类地址会让客户端
+/// 替发件人去请求本机或局域网里的服务（路由器、本机控制端口等）。在解析这一步过滤，连接只用过滤后的地址，
+/// 所以重定向和 DNS 重绑定也绕不过去。
+#[derive(Debug, Default)]
+struct PublicOnly(ureq::unversioned::resolver::DefaultResolver);
+
+impl ureq::unversioned::resolver::Resolver for PublicOnly {
+    /// 先正常解析，再只留公网地址；一个都不剩就当找不到主机。
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let all = self.0.resolve(uri, config, timeout)?;
+        let mut kept = self.empty();
+        for a in all.iter().filter(|a| is_public(a.ip())) {
+            kept.push(*a);
+        }
+        if kept.is_empty() {
+            log::info!("image host {uri} resolves only to non-public addresses, skipped");
+            return Err(ureq::Error::HostNotFound);
+        }
+        Ok(kept)
+    }
+}
+
+/// 是不是公网单播地址（回环、内网、链路本地、运营商 NAT、组播、保留段等都不算）。
+pub(crate) fn is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_public_v4(v4),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_public_v4(v4),
+            None => is_public_v6(v6),
+        },
+    }
+}
+
+/// IPv4 版的 [`is_public`]。
+fn is_public_v4(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_multicast()
+        || ip.is_documentation()
+        || a == 0
+        // 运营商级 NAT 100.64.0.0/10、保留 240.0.0.0/4。
+        // 198.18.0.0/15 故意放行：Surge、Clash 等代理的 fake-ip 模式把所有域名解析到这一段，挡掉就一张图都加载不了
+        || (a == 100 && (64..128).contains(&b))
+        || a >= 240)
+}
+
+/// IPv6 版的 [`is_public`]。
+fn is_public_v6(ip: Ipv6Addr) -> bool {
+    let first = ip.segments()[0];
+    !(ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+        // 唯一本地 fc00::/7、链路本地 fe80::/10、站点本地 fec0::/10、文档 2001:db8::/32
+        || (first & 0xfe00) == 0xfc00
+        || (first & 0xffc0) == 0xfe80
+        || (first & 0xffc0) == 0xfec0
+        || (first == 0x2001 && ip.segments()[1] == 0x0db8))
 }
 
 /// 下载线程：取一个请求，下载，回调；队列关闭就退出。

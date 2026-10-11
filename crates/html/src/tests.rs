@@ -38,6 +38,34 @@ fn data_and_cid_urls() {
     assert_eq!(net::cid_key("%3CLogo@X%3E"), "logo@x");
 }
 
+/// 邮件里的图片地址不能指向本机或局域网（防止替发件人请求内网服务）。
+#[test]
+fn only_public_addresses_are_fetched() {
+    let ok = |s: &str| net::is_public(s.parse().unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)));
+    for bad in [
+        "127.0.0.1",
+        "10.1.2.3",
+        "172.16.0.1",
+        "192.168.1.1",
+        "169.254.169.254",
+        "100.64.0.1",
+        "0.0.0.0",
+        "224.0.0.1",
+        "255.255.255.255",
+        "::1",
+        "::",
+        "fd00::1",
+        "fe80::1",
+        "::ffff:127.0.0.1",
+        "::ffff:192.168.0.1",
+    ] {
+        assert!(!ok(bad), "{bad} must be blocked");
+    }
+    for good in ["8.8.8.8", "142.250.72.14", "198.18.30.39", "2606:4700:4700::1111", "::ffff:8.8.8.8"] {
+        assert!(ok(good), "{good} must be allowed");
+    }
+}
+
 /// 排版、画块、点链接、选文字复制，整条路走一遍。
 #[test]
 fn layout_paint_click_and_copy() {
@@ -157,4 +185,23 @@ fn link_hit_area_matches_painted_button() {
     assert_eq!(hover(&mut v, bottom - 3.0).as_deref(), Some("https://example.com/b"), "bottom of the button");
     assert_eq!(hover(&mut v, bottom + 6.0), None, "below the button");
     assert_eq!(hover(&mut v, top - 6.0), None, "above the button");
+}
+
+/// 打开远程图片时，指向本机的图片地址收不到任何连接。
+#[test]
+fn local_image_urls_are_not_requested() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+    let opts = Options { remote_images: true, inline: vec![], wake: Arc::new(|| {}) };
+    let html = format!(r#"<body><img src="http://127.0.0.1:{port}/a.png"><img src="http://localhost:{port}/b.png"></body>"#);
+    let mut v = HtmlView::new(&html, opts);
+    v.set_size(300.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(1500) {
+        v.poll();
+        assert!(listener.accept().is_err(), "a local address was requested");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
