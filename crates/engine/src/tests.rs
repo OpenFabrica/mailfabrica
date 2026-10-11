@@ -926,3 +926,162 @@ fn demo_has_contacts_and_wrapped_quotes() {
     let quote: Vec<&str> = body.lines().skip_while(|l| !l.contains("写道")).skip(1).collect();
     assert!(quote.len() > 3 && quote.iter().all(|l| l.starts_with('>')), "{body}");
 }
+
+/// 有同主题邮件的会话：Alice 的周报三封（含一封 `Re:`），一封普通邮件，两封空主题。
+fn grouped_setup() -> (Session, FakeConnector, tempfile::TempDir) {
+    let fake = FakeConnector::empty("pw");
+    fake.deliver("INBOX", mail("Alice <alice@x.com>", ME, "Weekly report", "week one", 6));
+    fake.deliver("INBOX", mail("Bob <bob@x.com>", ME, "Lunch?", "noodles", 5));
+    fake.deliver("INBOX", mail("Alice <alice@x.com>", ME, "weekly  REPORT", "week two", 4));
+    fake.deliver("INBOX", mail("Nobody <n@x.com>", ME, "", "empty one", 3));
+    fake.deliver("INBOX", mail("Nobody <n@x.com>", ME, " ", "empty two", 2));
+    fake.deliver("INBOX", mail("Carol <carol@x.com>", ME, "Re: Weekly report", "week three", 1));
+    let (mut s, dir) = bare(&fake);
+    s.prefs.prefetch = 0;
+    s.execute("account.add", json!({"email": ME, "password": "pw", "name": "Me", "verify": false})).unwrap();
+    s.wait_idle(WAIT);
+    s.execute("view.scope", json!({"account": ACC, "folder": "INBOX"})).unwrap();
+    (s, fake, dir)
+}
+
+/// 列表行的简写：每行的主题（组用 `组键×封数`）。
+fn row_names(s: &Session) -> Vec<String> {
+    let v = s.view();
+    v.rows
+        .iter()
+        .map(|r| match &r.group {
+            Some(g) => format!("{g}×{}", r.members.len()),
+            None => v.messages[r.members[0]].subject.trim().to_string(),
+        })
+        .collect()
+}
+
+#[test]
+fn build_rows_groups_by_normalized_subject() {
+    let m = |subject: &str, date: i64| MessageMeta { subject: subject.into(), date, ..Default::default() };
+    let msgs = vec![m("RE: Hello", 5), m("other", 4), m("", 3), m("hello", 2), m("", 1), m("Fwd: Re: HELLO", 0)];
+    let rows = view::build_rows(&msgs, true);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0], ListRow { members: vec![0, 3, 5], group: Some("hello".into()) });
+    assert_eq!(rows[1], ListRow { members: vec![1], group: None });
+    // 空主题不归类
+    assert_eq!(rows[2], ListRow { members: vec![2], group: None });
+    assert_eq!(rows[3], ListRow { members: vec![4], group: None });
+    // 关掉归类：一封一行
+    let flat = view::build_rows(&msgs, false);
+    assert_eq!(flat.len(), msgs.len());
+    assert!(flat.iter().enumerate().all(|(i, r)| r.members == vec![i] && r.group.is_none()));
+}
+
+#[test]
+fn list_groups_messages_with_the_same_subject() {
+    let (mut s, _fake, _dir) = grouped_setup();
+    assert!(s.prefs.group_by_subject, "on by default");
+    assert_eq!(s.view().messages.len(), 6);
+    // 组排在最新一封的位置；空主题各占一行
+    assert_eq!(row_names(&s), vec!["weekly report×3", "", "", "Lunch?"]);
+    let g = &s.groups()[0];
+    assert_eq!((g.group.as_str(), g.subject.as_str(), g.count, g.unread, g.flagged), ("weekly report", "Re: Weekly report", 3, 3, false));
+    // 组里最新的在前
+    let dates: Vec<i64> = s.group_messages("weekly report").iter().map(|m| m.date).collect();
+    assert!(dates.windows(2).all(|w| w[0] >= w[1]), "{dates:?}");
+    // 未读数跟着标记变化
+    let oldest = key_of(&s, "Weekly report");
+    s.execute("message.markRead", json!({"keys": [oldest.to_string()]})).unwrap();
+    assert_eq!(s.group_info("weekly report").unread, 2);
+    s.execute("message.flag", json!({"keys": [oldest.to_string()], "flagged": true})).unwrap();
+    assert!(s.group_info("weekly report").flagged);
+    // view.groups 给控制通道/命令行看
+    let r = s.execute("view.groups", json!({})).unwrap();
+    assert_eq!(r["enabled"], true);
+    assert_eq!(r["rows"], 4);
+    assert_eq!(r["groups"][0]["count"], 3);
+    assert_eq!(s.group_of(&oldest), Some("weekly report"));
+    assert_eq!(s.group_of(&key_of(&s, "Lunch?")), None);
+}
+
+#[test]
+fn grouping_pref_off_lists_every_message() {
+    let (mut s, _fake, dir) = grouped_setup();
+    s.execute("view.selectGroup", json!({"subject": "Fwd: weekly report"})).unwrap();
+    assert_eq!(s.view().group.as_deref(), Some("weekly report"));
+    s.execute("app.prefs", json!({"groupBySubject": false})).unwrap();
+    assert_eq!(s.view().rows.len(), 6);
+    assert!(s.groups().is_empty());
+    // 组没了：组视图关掉，改为显示一封
+    assert_eq!(s.view().group, None);
+    assert!(s.view().focused.is_some());
+    assert_eq!(s.view().selected.len(), 1);
+    // 偏好存盘
+    let saved = std::fs::read_to_string(dir.path().join("prefs.json")).unwrap();
+    assert!(saved.contains("\"groupBySubject\": false"), "{saved}");
+    s.execute("app.prefs", json!({"groupBySubject": true})).unwrap();
+    assert_eq!(s.view().rows.len(), 4);
+}
+
+#[test]
+fn selecting_a_group_and_acting_on_it() {
+    let (mut s, fake, _dir) = grouped_setup();
+    let lunch = key_of(&s, "Lunch?");
+    s.execute("view.select", json!({"key": lunch.to_string()})).unwrap();
+    // 按 ↑ 回到第一行（组）：打开整组，不标已读
+    s.execute("view.prev", json!({})).unwrap();
+    s.execute("view.prev", json!({})).unwrap();
+    let r = s.execute("view.prev", json!({})).unwrap();
+    assert_eq!(r["group"], "weekly report");
+    assert_eq!(s.view().group.as_deref(), Some("weekly report"));
+    assert_eq!(s.view().focused, None);
+    assert_eq!(s.view().selected.len(), 3);
+    assert_eq!(s.group_info("weekly report").unread, 3);
+    // 回复/转发不可用（没有单封邮件打开），删除/标记可用
+    assert!(matches!(s.execute("compose.reply", json!({})), Err(EngineError::Disabled(..))));
+    assert!(s.commands().iter().any(|c| c.id == "message.delete" && c.enabled));
+    // 标记作用于整组
+    s.execute("message.markRead", json!({})).unwrap();
+    assert_eq!(s.group_info("weekly report").unread, 0);
+    // 组里点一封：离开组视图，只打开这一封
+    let newest = s.group_info("weekly report").keys[0].clone();
+    s.execute("view.select", json!({"key": newest.to_string()})).unwrap();
+    assert_eq!(s.view().group, None);
+    assert_eq!(s.view().selected, vec![newest.clone()]);
+    assert_eq!(s.current_row(), Some(0));
+    // 按键回到组
+    let r = s.execute("view.selectGroup", json!({"key": newest.to_string()})).unwrap();
+    assert_eq!(r["count"], 3);
+    // ↓ 从组走到下一行
+    let r = s.execute("view.next", json!({})).unwrap();
+    assert!(r.get("group").is_none());
+    assert_eq!(s.view().group, None);
+    assert_eq!(s.current_row(), Some(1));
+    // 删除整组：三封都进已删除，焦点移到下一行
+    s.execute("view.selectGroup", json!({"group": "weekly report"})).unwrap();
+    let r = s.execute("message.delete", json!({})).unwrap();
+    assert_eq!(r["moved"], 3);
+    assert_eq!(row_names(&s), vec!["", "", "Lunch?"]);
+    assert_eq!(s.view().group, None);
+    assert_eq!(s.current_row(), Some(0));
+    s.wait_idle(WAIT);
+    assert_eq!(fake.list("INBOX").len(), 3);
+    // 不存在的组
+    assert!(s.execute("view.selectGroup", json!({"group": "weekly report"})).is_err());
+    assert!(s.execute("view.selectGroup", json!({"key": lunch.to_string()})).is_err());
+}
+
+#[test]
+fn open_group_follows_new_and_removed_mail() {
+    let (mut s, fake, _dir) = grouped_setup();
+    s.execute("view.selectGroup", json!({"group": "weekly report"})).unwrap();
+    // 新到一封同主题的：组变成四封，选择跟着变
+    fake.deliver("INBOX", mail("Alice <alice@x.com>", ME, "回复：Weekly report", "week four", 0));
+    s.execute("mail.sync", json!({})).unwrap();
+    s.wait_idle(WAIT);
+    assert_eq!(s.group_info("weekly report").count, 4);
+    assert_eq!(s.view().selected.len(), 4);
+    assert_eq!(s.view().focused, None);
+    // 删到只剩一封：组视图关掉，显示剩下的那封
+    let keys = s.group_info("weekly report").keys;
+    let gone: Vec<String> = keys[1..].iter().map(MsgKey::to_string).collect();
+    s.execute("message.delete", json!({"keys": gone})).unwrap();
+    assert_eq!(s.view().group, None);
+    assert_eq!(s.view().focused.as_ref(), Some(&keys[0]));
+}

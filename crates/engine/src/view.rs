@@ -1,14 +1,14 @@
 //! 邮件列表视图和对邮件的本地操作：范围 → 文件夹列表、刷新、选择、正文加载、
 //! 乐观更新（先改本地再提交服务器任务）。
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use mailfabrica_core::{Flag, Folder, FolderRole, MsgKey};
+use mailfabrica_core::{Flag, Folder, FolderRole, MessageMeta, MsgKey};
 use mailfabrica_sync::JobKind;
 
 use crate::events::Action;
-use crate::{BODY_CACHE_MAX, BodyState, EngineError, Result, Scope, Session};
+use crate::{BODY_CACHE_MAX, BodyState, EngineError, ListRow, Result, Scope, Session};
 
 /// 统一范围（未读、红旗）里算不算这个文件夹：可打开，且不是已删除和垃圾邮件。
 pub(crate) fn counts_as_mail(f: &Folder) -> bool {
@@ -25,6 +25,36 @@ pub(crate) fn group(keys: &[MsgKey]) -> BTreeMap<(String, String), Vec<u32>> {
         }
     }
     out
+}
+
+/// 把按日期倒序的邮件排成列表行。`by_subject` 时归一化主题相同的邮件合成一行（空主题不归类），
+/// 行的顺序跟着每组最新一封走；只有一封的组还是普通行。
+pub(crate) fn build_rows(messages: &[MessageMeta], by_subject: bool) -> Vec<ListRow> {
+    if !by_subject {
+        return (0..messages.len()).map(|i| ListRow { members: vec![i], group: None }).collect();
+    }
+    let mut rows: Vec<ListRow> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (i, m) in messages.iter().enumerate() {
+        let key = mailfabrica_mime::subject_key(&m.subject);
+        if key.is_empty() {
+            rows.push(ListRow { members: vec![i], group: None });
+            continue;
+        }
+        match index.get(&key).and_then(|r| rows.get_mut(*r)) {
+            Some(row) => row.members.push(i),
+            None => {
+                index.insert(key.clone(), rows.len());
+                rows.push(ListRow { members: vec![i], group: Some(key) });
+            }
+        }
+    }
+    for r in &mut rows {
+        if r.members.len() < 2 {
+            r.group = None;
+        }
+    }
+    rows
 }
 
 impl Session {
@@ -86,11 +116,81 @@ impl Session {
         if self.view.focused.as_ref().is_some_and(|k| !present.contains(k)) {
             self.view.focused = self.view.selected.last().cloned();
         }
+        self.view.rows = build_rows(&list, self.prefs.group_by_subject);
         self.view.messages = list;
+        self.sync_open_group();
+    }
+
+    /// 列表重建后让打开的主题组保持一致：组还在就把选择更新成组里现在的全部邮件（新到的同主题邮件也算）；
+    /// 组没了（删到只剩一封、关掉归类）就关掉组视图，改为显示剩下的那封。
+    fn sync_open_group(&mut self) {
+        let Some(g) = self.view.group.clone() else { return };
+        let keys: Vec<MsgKey> = self.group_messages(&g).into_iter().map(|m| m.key.clone()).collect();
+        if keys.is_empty() {
+            self.view.group = None;
+            if self.view.focused.is_none() {
+                self.view.focused = self.view.selected.first().cloned();
+                self.view.selected = self.view.focused.iter().cloned().collect();
+            }
+        } else {
+            self.view.selected = keys;
+            self.view.focused = None;
+        }
+    }
+
+    /// 打开一个主题组：选中组里全部邮件（最新的在前），不聚焦单封，阅读窗格显示这一组的列表。不标已读。
+    pub(crate) fn select_group(&mut self, group: &str) -> Result<Vec<MsgKey>> {
+        let keys: Vec<MsgKey> = self.group_messages(group).into_iter().map(|m| m.key.clone()).collect();
+        if keys.is_empty() {
+            return Err(EngineError::Other(format!("no subject group `{group}` in the list")));
+        }
+        self.view.group = Some(group.to_string());
+        self.view.selected = keys.clone();
+        self.view.focused = None;
+        Ok(keys)
+    }
+
+    /// 当前所在的行：打开的主题组那一行，或者聚焦邮件所在的行。
+    pub fn current_row(&self) -> Option<usize> {
+        let rows = &self.view.rows;
+        if let Some(g) = &self.view.group {
+            return rows.iter().position(|r| r.group.as_ref() == Some(g));
+        }
+        let fk = self.view.focused.as_ref()?;
+        let mi = self.view.messages.iter().position(|m| &m.key == fk)?;
+        rows.iter().position(|r| r.members.contains(&mi))
+    }
+
+    /// 选中第 `idx` 行：主题组就打开组，单封邮件就选中并打开它。返回这一行最新一封的键和（如有）归类键。
+    pub(crate) fn select_row(&mut self, idx: usize) -> Result<(MsgKey, Option<String>)> {
+        let row = self.view.rows.get(idx).cloned().ok_or_else(|| EngineError::Other("the list is empty".into()))?;
+        let key = row.members.first().and_then(|i| self.view.messages.get(*i)).map(|m| m.key.clone());
+        let key = key.ok_or_else(|| EngineError::Other("the list is empty".into()))?;
+        match &row.group {
+            Some(g) => {
+                self.select_group(g)?;
+            }
+            None => self.select_keys(vec![key.clone()], false, true),
+        }
+        Ok((key, row.group))
+    }
+
+    /// 选中这封邮件所在的行（在主题组里就打开整组，否则打开这封）。删除后移动焦点用。
+    fn select_row_of(&mut self, key: &MsgKey) {
+        match self.group_of(key).map(str::to_string) {
+            Some(g) => {
+                if let Err(e) = self.select_group(&g) {
+                    log::warn!("select group: {e}");
+                }
+            }
+            None => self.select_keys(vec![key.clone()], false, true),
+        }
     }
 
     /// 选择邮件：`extend` 时切换这些邮件的选中状态，否则替换选择。聚焦最后一封并打开它。
     pub(crate) fn select_keys(&mut self, keys: Vec<MsgKey>, extend: bool, mark_read: bool) {
+        // 选单封（或多选）就离开主题组视图
+        self.view.group = None;
         if extend {
             for k in &keys {
                 if let Some(i) = self.view.selected.iter().position(|s| s == k) {
@@ -203,7 +303,8 @@ impl Session {
         }
         let moving: Vec<MsgKey> = plan.iter().flat_map(|(a, f, uids, _)| uids.iter().map(|u| MsgKey::new(a.clone(), f.clone(), *u))).collect();
         let next = self.next_after(&moving);
-        let lost_focus = self.view.focused.as_ref().is_some_and(|k| moving.contains(k));
+        // 打开的主题组整组被删/移走，也算丢了焦点
+        let lost_focus = self.view.focused.as_ref().is_some_and(|k| moving.contains(k)) || (self.view.group.is_some() && self.view.focused.is_none());
         self.store.remove(&moving)?;
         for k in &moving {
             self.bodies.remove(k);
@@ -227,7 +328,7 @@ impl Session {
             && self.view.selected.is_empty()
             && let Some(n) = next
         {
-            self.select_keys(vec![n], false, true);
+            self.select_row_of(&n);
         }
         match first_err {
             Some(e) => Err(e),
@@ -235,15 +336,16 @@ impl Session {
         }
     }
 
-    /// 列表里排在这些邮件之后的第一封（没有就取之前最近的一封），用于删除后的焦点。
+    /// 列表里排在这些邮件所在行之后的第一行（没有就取之前最近的一行）里还留着的最新一封，用于删除后的焦点。
+    /// 按行算：主题组算一行，删掉组里一封后先跳到下一行，最后才回到这个组剩下的邮件。
     fn next_after(&self, gone: &[MsgKey]) -> Option<MsgKey> {
-        let list = &self.view.messages;
-        let last = list.iter().rposition(|m| gone.contains(&m.key))?;
-        list.iter()
-            .skip(last + 1)
-            .find(|m| !gone.contains(&m.key))
-            .or_else(|| list.iter().take(last).rev().find(|m| !gone.contains(&m.key)))
-            .map(|m| m.key.clone())
+        let gone: HashSet<&MsgKey> = gone.iter().collect();
+        let msgs = &self.view.messages;
+        let rows = &self.view.rows;
+        let touched = |r: &ListRow| r.members.iter().any(|i| msgs.get(*i).is_some_and(|m| gone.contains(&m.key)));
+        let alive = |r: &ListRow| r.members.iter().filter_map(|i| msgs.get(*i)).find(|m| !gone.contains(&m.key)).map(|m| m.key.clone());
+        let last = rows.iter().rposition(touched)?;
+        rows.iter().skip(last + 1).find_map(alive).or_else(|| rows.iter().take(last + 1).rev().find_map(alive))
     }
 
     /// 校验并定位删除/移动目标：同账户里某个角色的文件夹。

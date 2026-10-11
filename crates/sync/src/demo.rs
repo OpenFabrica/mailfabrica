@@ -188,13 +188,23 @@ pub(crate) fn messages(email: &str) -> Vec<DemoMessage> {
     m.references = vec![id1, id2];
     d.add("INBOX", UNREAD, local_ts(3, 17, 20), m);
 
-    let m = out(
-        who("星河云安全中心", "security@xinghe-cloud.example"),
-        &me,
-        "账号登录提醒：新设备登录",
-        "你的账号刚刚在一台新设备上登录。\n\n- 设备：桌面客户端\n- 地区：上海\n\n如果是你本人操作，可以忽略这封邮件。否则请尽快修改密码。\n",
-    );
-    d.add("INBOX", SEEN, local_ts(2, 13, 10), m);
+    // 同一个发件人、同一个主题的登录提醒：列表里按主题归成一组（9 天前、6 天前、2 天前、今天各一封）
+    for (days, hour, min, device, place, flags) in [
+        (9, 21, 5, "手机客户端", "杭州", SEEN),
+        (6, 8, 30, "网页版", "北京", SEEN),
+        (2, 13, 10, "桌面客户端", "上海", SEEN),
+        (0, 6, 20, "平板客户端", "深圳", UNREAD),
+    ] {
+        let m = out(
+            who("星河云安全中心", "security@xinghe-cloud.example"),
+            &me,
+            "账号登录提醒：新设备登录",
+            &format!(
+                "你的账号刚刚在一台新设备上登录。\n\n- 设备：{device}\n- 地区：{place}\n\n如果是你本人操作，可以忽略这封邮件。否则请尽快修改密码。\n"
+            ),
+        );
+        d.add("INBOX", flags, local_ts(days, hour, min), m);
+    }
 
     // 昨天
     let m = out(
@@ -420,6 +430,9 @@ mod tests {
         assert!(all.iter().filter(|m| m.flags.flagged).count() >= 2);
         assert!(all.iter().filter(|m| !m.flags.seen).count() >= 3);
         assert!(all.iter().any(|m| m.folder == "Drafts" && m.flags.draft && m.flags.seen));
+        // 至少有一组 3 封以上同主题的收件箱邮件（演示按主题归类）
+        let same = all.iter().filter(|m| m.folder == "INBOX" && String::from_utf8_lossy(&m.raw).contains("security@xinghe-cloud.example")).count();
+        assert!(same >= 3, "{same}");
     }
 
     /// 每封邮件都有头体分隔和 Message-ID。

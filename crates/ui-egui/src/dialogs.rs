@@ -215,7 +215,7 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
                 app.ui.language = l;
             }
             let mut p = Map::new();
-            for k in ["markReadOnOpen", "saveSent", "chineseQuotes", "quoteOnReply", "composeRich"] {
+            for k in ["markReadOnOpen", "groupBySubject", "saveSent", "chineseQuotes", "quoteOnReply", "composeRich"] {
                 p.insert(k.into(), json!(d.b(k)));
             }
             let interval =
@@ -653,7 +653,7 @@ fn account_edit(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog, close: &mut bool
     }
 }
 
-/// 设置：主题、语言、打开即已读、自动收取间隔、保存已发送、中文引用头、回复时引用原文、写信默认超文本。
+/// 设置：主题、语言、打开即已读、按主题归类、自动收取间隔、保存已发送、中文引用头、回复时引用原文、写信默认超文本。
 fn settings(ui: &mut Ui, d: &mut Dialog, lang: Language) {
     let t = Tokens::get(ui.ctx());
     egui::Grid::new("settings").num_columns(2).spacing(vec2(16.0, 12.0)).min_col_width(110.0).show(ui, |ui| {
@@ -691,6 +691,9 @@ fn settings(ui: &mut Ui, d: &mut Dialog, lang: Language) {
         ui.end_row();
         ui.label(egui::RichText::new(lang.t("Reading")).color(t.text_dim));
         check(ui, d, "markReadOnOpen", lang.t("Mark messages as read when opened"));
+        ui.end_row();
+        ui.label("");
+        check(ui, d, "groupBySubject", lang.t("Group messages with the same subject"));
         ui.end_row();
         // 每个选项单独一行，只有第一行带分组标签，这样标签和第一项对齐
         for (i, (key, label)) in [

@@ -14,7 +14,10 @@
 //! - `view.scope` — `{account, folder}` 或 `{kind: "allInboxes"|"unread"|"flagged"}`，切换列表范围并清空搜索。
 //! - `view.search` — `{query}`，在当前范围（文件夹范围时为该账户全部文件夹）搜索，空串取消搜索。
 //! - `view.select` — `{key}` 或 `{keys}`，可选 `{extend: true}` 追加/取消；聚焦最后一个并打开（触发正文下载、自动已读）。
-//! - `view.next` / `view.prev` — 选中列表里的下一封/上一封。快捷键 ↓/↑（UI 负责）。
+//! - `view.selectGroup` — `{group}`（归类键）、`{subject}`（任意写法的主题，会归一化）或 `{key}`（组里的某封），
+//!   打开主题组：选中组里全部邮件、不聚焦单封；返回组摘要 `{group, subject, count, unread, flagged, keys}`。
+//! - `view.groups` (query) — `{enabled, rows, open, groups: [组摘要]}`：是否按主题归类、行数、打开的组、全部主题组。
+//! - `view.next` / `view.prev` — 选中列表里的下一行/上一行（主题组算一行，选中就打开整组）。快捷键 ↓/↑（UI 负责）。
 //! - `message.list` (query) — `{account?, folder?, limit?, offset?, unreadOnly?}`，不给范围就用当前视图；只给账户时为它的收件箱。
 //!   返回 `{total, messages}`。
 //! - `message.get` (query) — `{key}` → `{meta, body?: MessageView, state: "ready"|"loading"|"missing"|"failed"}`。
@@ -56,7 +59,7 @@
 //! - `contacts.add` — `{email, name?}`。
 //! - `contacts.remove` — `{email}`。
 //! - `app.status` (query) — 状态栏信息、忙碌账户、错误。
-//! - `app.prefs` — `{…Prefs 字段}` 修改偏好；空参数返回当前偏好。
+//! - `app.prefs` — `{…Prefs 字段}` 修改偏好；空参数返回当前偏好。`groupBySubject` 开关按主题归类（改了马上重排列表）。
 //! - `app.dialog` — `{name}` 请求打开对话框（`settings`、`contacts`、`about`）。
 
 mod account;
