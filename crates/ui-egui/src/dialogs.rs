@@ -88,7 +88,7 @@ impl Dialog {
                     d.values.insert(k.into(), init.get(k).cloned().unwrap_or(json!("")));
                 }
             }
-            "about" => {}
+            "about" | "updates" => {}
             _ => return None,
         }
         Some(d)
@@ -132,6 +132,7 @@ impl Dialog {
             "accountEdit" => lang.t("Account Settings"),
             "settings" => lang.t("Settings"),
             "contacts" => lang.t("Address Book"),
+            "updates" => lang.t("Software Update"),
             _ => lang.t("About MailFabrica"),
         }
     }
@@ -322,6 +323,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                 "accountEdit" => account_edit(app, ui, &mut d, &mut close),
                 "settings" => settings(ui, &mut d, lang),
                 "contacts" => contacts(app, ui, &mut d, &mut close),
+                "updates" => crate::update_dialog::show(app, ui),
                 _ => about(ui, lang, &t),
             }
             if let Some(e) = &d.error {
@@ -335,7 +337,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                     // 选邮箱类型这一步只有"取消"，点类型本身就进入下一步
                     "accountAdd" if d.s("provider").is_empty() => (None, lang.t("Cancel")),
                     "accountAdd" => (Some(lang.t("Add")), lang.t("Cancel")),
-                    "contacts" | "about" => (None, lang.t("Close")),
+                    "contacts" | "about" | "updates" => (None, lang.t("Close")),
                     _ => (Some(lang.t("Save")), lang.t("Cancel")),
                 };
                 let verifying = d.verifying.is_some();
@@ -364,7 +366,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
     if escape {
         close = true;
     }
-    if enter && !multiline_focus && d.name != "contacts" && d.name != "about" {
+    if enter && !multiline_focus && d.name != "contacts" && d.name != "about" && d.name != "updates" {
         ok = true;
     }
     if close {

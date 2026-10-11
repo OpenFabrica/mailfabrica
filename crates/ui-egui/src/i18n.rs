@@ -94,6 +94,10 @@ fn lookup(key: &str) -> Option<&'static str> {
 
 /// 命令 id → (英文, 中文)。
 pub const COMMANDS: &[(&str, &str, &str)] = &[
+    ("update.check", "Check for Updates", "检查更新"),
+    ("update.download", "Download and Open Installer", "下载并打开安装器"),
+    ("update.open", "Open Installer", "打开安装器"),
+    ("update.status", "Update Status", "更新状态"),
     ("account.add", "Add Account", "添加账户"),
     ("account.update", "Account Settings", "账户设置"),
     ("account.remove", "Remove Account", "删除账户"),
@@ -128,6 +132,25 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
 
 /// 英文 → 中文。
 pub const TABLE: &[(&str, &str)] = &[
+    ("Software Update", "软件更新"),
+    ("Check for Updates", "检查更新"),
+    ("Download and Open Installer", "下载并打开安装器"),
+    ("Open Installer", "打开安装器"),
+    ("Installer saved", "安装器已保存"),
+    ("Checking for updates…", "正在检查更新…"),
+    ("No newer stable release is available.", "当前没有更新的正式版本。"),
+    ("A new version is available: {v}", "发现新版本：{v}"),
+    ("Downloading installer…", "正在下载安装器…"),
+    ("Verifying installer…", "正在校验安装包与发布者签名…"),
+    (
+        "The installer is ready. Drag MailFabrica into Applications, then quit and reopen the app.",
+        "安装器已就绪。将 MailFabrica 拖入 Applications，退出应用后重新打开。",
+    ),
+    ("Could not complete the update. Check your network and retry.", "更新未能完成，请检查网络后重试。"),
+    ("Check the official GitHub releases for a newer stable version.", "从官方 GitHub 发布页检查新的正式版本。"),
+    ("Release notes", "更新说明"),
+    ("View release", "查看发布页"),
+    ("Installer verification is complete.", "安装器已通过完整性与发布者校验。"),
     ("(empty message)", "（空邮件）"),
     ("(no recipient)", "（无收件人）"),
     ("(no subject)", "（无主题）"),

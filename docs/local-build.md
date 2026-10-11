@@ -1,4 +1,4 @@
-# 本地 macOS 应用包
+# macOS 构建与公证
 
 `cargo xtask package` 将当前 checkout 的 release 构建打成 Finder 可打开的应用和 DMG。此流程不推进版本号、不打标签、不推送、不发布、不安装到 `/Applications`。
 
@@ -31,11 +31,25 @@ flowchart LR
 
 只支持当前 macOS 本机架构，设置了 `CARGO_BUILD_TARGET` 时拒绝执行。复用 Cargo 的 `target_directory`，不覆盖既有产物目录；失败时清理临时目录。
 
-应用采用 ad-hoc 本地签名，未经过 Apple 公证。面向公众的签名、公证及发布需要另行配置。
+默认采用 ad-hoc 本地签名，未经过 Apple 公证。正式包需要成对设置以下非秘密配置名称，凭据保留在 macOS 钥匙串中：
+
+```sh
+APPLE_SIGN_IDENTITY='Developer ID Application: Name (TEAMID)' \
+APPLE_NOTARY_PROFILE='existing-keychain-profile' \
+cargo xtask package
+```
+
+正式模式要求版本不含 `-dev`、工作区完全干净，`v<version>` 注释标签指向当前 HEAD 且属于本地 `master`。发布前还必须确认标签已在 `origin/master` 上。打包不会创建标签或推送。
+
+打包为两个可执行文件及应用启用 Developer ID、安全时间戳与 Hardened Runtime。先提交应用 ZIP 给 Apple，等待 Accepted 并 staple 应用，再生成、签名、公证与 staple DMG；两者都验证票据和 Gatekeeper 判定。`dist/notary-<包名>/` 保存 submission UUID、结果与 Apple 日志；等待超时不等于成功，按 UUID 查询后处理。
+
+`build.json` 记录签名方式、公证状态、两个 submission UUID，以及 staple 后最终文件的 SHA-256。公开发布必须使用这些最终文件，不可重新签名或修改它们。
 
 ## Logo
 
 原创蓝色圆角底、白色信封与青色交织线，呼应 Mail 与 Fabrica。`xtask/src/icon.rs` 用矢量路径绘制，不在源仓库存放位图或字体。打包时生成 16–1024 像素 PNG，并由系统 `iconutil` 组装 `.icns`。
+
+启动时显式使用系统应用图标，防止 eframe 默认 logo 覆盖包内的 `.icns`，保证 Finder 和 Dock 显示同一图形。
 
 只预览 logo，无需构建应用：
 

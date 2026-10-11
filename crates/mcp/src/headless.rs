@@ -45,6 +45,11 @@ impl Headless {
             self.session.wait_idle(self.idle_timeout);
         }
         let r = r?;
+        if id.starts_with("update.") {
+            // 无窗口运行器不打开安装器；返回最终状态/缓存路径，供 CLI、MCP 后续操作。
+            self.session.take_ui_requests();
+            return Ok(serde_json::json!(self.session.update()));
+        }
         // 发信失败时窗口不会关闭，错误留在写信窗口里：把它变成命令错误，调用方才不会误以为成功。
         if id == "compose.send"
             && let Some(cid) = compose_id

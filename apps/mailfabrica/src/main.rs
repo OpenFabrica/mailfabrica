@@ -151,6 +151,8 @@ fn main() -> eframe::Result<()> {
     }
     let viewport = egui::ViewportBuilder::default()
         .with_title("MailFabrica")
+        // 显式使用系统图标：未设置时 eframe 会把 Dock 图标覆盖成自己的默认 logo。
+        .with_icon(egui::IconData::default())
         .with_inner_size([app.ui.sidebar_width.max(170.0) + app.ui.list_width.max(260.0) + 690.0, 800.0])
         .with_min_inner_size([900.0, 560.0])
         .with_app_id("dev.mailfabrica.MailFabrica");

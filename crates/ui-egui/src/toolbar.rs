@@ -220,6 +220,14 @@ fn main_menu(app: &mut MailApp, ui: &mut Ui, lang: Language) {
         }
     });
     ui.separator();
+    let update = ui.button(lang.t("Check for Updates"));
+    app.target("menu.update", update.rect);
+    if update.clicked() {
+        app.defer("app.dialog", json!({"name": "updates"}));
+        if !app.session.update().busy() && app.session.update().release.is_none() {
+            app.defer("update.check", json!({}));
+        }
+    }
     if ui.button(lang.t("About MailFabrica")).clicked() {
         app.defer("ui.dialog", json!({"name": "about"}));
     }

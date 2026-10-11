@@ -278,3 +278,19 @@ fn folder_removal_deletes_data_and_keeps_counts() {
     assert!(!dir.path().join(ACC).exists());
     assert!(s.folders(ACC).is_empty());
 }
+
+/// 安装器只能写在更新缓存中；重复保存原子覆盖，路径穿越和其他格式被拒绝。
+#[test]
+fn installer_cache_is_atomic_and_confined() {
+    let tmp = tempfile::tempdir().expect("temp");
+    let store = Store::open(tmp.path()).expect("store");
+    let name = "MailFabrica-0.2.0-arm64.dmg";
+    let path = store.save_installer(name, b"old").expect("save");
+    assert_eq!(path.parent(), Some(tmp.path().join("updates").as_path()));
+    store.save_installer(name, b"new").expect("replace");
+    assert_eq!(std::fs::read(&path).expect("read"), b"new");
+    assert!(!with_suffix(&path, ".tmp").exists());
+    for name in ["../file.dmg", "MailFabrica-../file.dmg", "MailFabrica.exe", "/tmp/MailFabrica.dmg"] {
+        assert!(store.save_installer(name, b"bad").is_err());
+    }
+}

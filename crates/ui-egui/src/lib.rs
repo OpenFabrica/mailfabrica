@@ -20,6 +20,7 @@ pub mod richview;
 pub mod sidebar;
 pub mod theme;
 pub mod toolbar;
+mod update_dialog;
 pub mod widgets;
 
 use std::collections::VecDeque;
@@ -340,6 +341,13 @@ impl MailApp {
                 }
                 UiRequest::CloseCompose(id) => self.composer.forget(id),
                 UiRequest::OpenUrl(u) => self.open_url(&u),
+                UiRequest::OpenInstaller(path) => {
+                    if let Some(open) = &self.services.open_url {
+                        open(&path.to_string_lossy());
+                    } else {
+                        self.message = Some(format!("{}: {}", self.lang().t("Installer saved"), path.display()));
+                    }
+                }
                 UiRequest::AccountAdded(id) => dialogs::account_add_result(self, &id, None),
                 UiRequest::AccountAddFailed { id, message, servers } => dialogs::account_add_result(self, &id, Some((message, servers))),
             }
@@ -377,7 +385,7 @@ impl MailApp {
         self.after_engine();
         control::poll(self, ctx);
         // 忙时刷新快一点看进度；空闲时也定期醒来，让引擎做自动收取
-        let ms = if self.session.status().busy { 250 } else { 3000 };
+        let ms = if self.session.status().busy || self.session.update().busy() { 250 } else { 3000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(ms));
     }
 

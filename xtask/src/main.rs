@@ -8,6 +8,8 @@
 mod icon;
 mod layers;
 #[cfg(target_os = "macos")]
+mod notary;
+#[cfg(target_os = "macos")]
 mod package;
 
 use std::path::{Path, PathBuf};

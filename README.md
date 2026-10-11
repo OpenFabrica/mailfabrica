@@ -60,3 +60,5 @@ Built with the help of [Claude Code](https://www.anthropic.com/claude-code) (Cla
 
 ## License
 MIT OR Apache-2.0.
+
+- Updates: use **Check for Updates** in the toolbar menu; download, verify and open the macOS installer. See [help](docs/update-help.md) and [developer guide](docs/updates.md).

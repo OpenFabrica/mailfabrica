@@ -60,3 +60,5 @@ QQ、163、126 等邮箱要先在网页版设置里开启 IMAP/SMTP，并用 **�
 
 ## 许可
 MIT OR Apache-2.0。
+
+- 应用更新：工具栏菜单选择“检查更新”，下载、校验后打开 macOS 安装器。见 [使用帮助](docs/update-help.md) 与 [开发文档](docs/updates.md)。

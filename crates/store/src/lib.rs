@@ -65,6 +65,24 @@ impl Store {
         &self.root
     }
 
+    /// 保存经过引擎完整性检查的安装器；仅接受文件名，禁止路径穿越，原子写入缓存。
+    pub fn save_installer(&self, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+        if !name.starts_with("MailFabrica-")
+            || !name.ends_with(".dmg")
+            || name.len() > 150
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._".contains(&b))
+            || name.contains("..")
+        {
+            return Err(MailError::Invalid("invalid installer filename".into()));
+        }
+        let path = self.root.join("updates").join(name);
+        if let Err(error) = write_atomic(&path, bytes) {
+            let _ = fs::remove_file(with_suffix(&path, ".tmp"));
+            return Err(error);
+        }
+        Ok(path)
+    }
+
     // ---------------------------------------------------------------- 账户
 
     pub fn accounts(&self) -> &[AccountConfig] {

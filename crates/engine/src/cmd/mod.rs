@@ -60,6 +60,10 @@
 //! - `contacts.list` (query) — `{query?}`。
 //! - `contacts.add` — `{email, name?}`。
 //! - `contacts.remove` — `{email}`。
+//! - `update.check` — `{}` 检查 GitHub 稳定版；异步结果用 `update.status` 查询。
+//! - `update.download` — `{}` 下载可用更新，验证后请求打开安装器。
+//! - `update.open` — `{}` 重新验证并打开已下载的安装器。
+//! - `update.status` (query) — `{}` 阶段、发布信息、进度、路径和错误。
 //! - `app.status` (query) — 状态栏信息、忙碌账户、错误。
 //! - `app.prefs` — `{…Prefs 字段}` 修改偏好；空参数返回当前偏好。`groupBySubject` 开关按主题归类（改了马上重排列表）。
 //! - `app.dialog` — `{name}` 请求打开对话框（`settings`、`contacts`、`about`）。
@@ -69,6 +73,7 @@ mod app;
 pub(crate) mod compose;
 mod mail;
 mod message;
+mod update;
 
 use mailfabrica_core::MsgKey;
 use serde::Serialize;
@@ -134,6 +139,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(message::specs());
         v.extend(compose::specs());
         v.extend(app::specs());
+        v.extend(update::specs());
         v
     })
 }

@@ -10,7 +10,9 @@ pub mod cmd;
 mod events;
 mod i18n;
 pub mod secrets;
+mod updates;
 mod view;
+pub use updates::{UpdatePhase, UpdateState};
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -285,6 +287,8 @@ pub enum UiRequest {
         servers: bool,
     },
     OpenUrl(String),
+    /// 打开经过完整性和发布者检查的本地安装器。
+    OpenInstaller(PathBuf),
 }
 
 /// 演示账户的邮箱和密码（`Session::demo` 用）。
@@ -314,6 +318,7 @@ pub struct Session {
     store: Store,
     secrets: Arc<dyn SecretStore>,
     worker: Worker,
+    updates: updates::Updates,
     view: MailView,
     bodies: HashMap<MsgKey, BodyState>,
     composes: Vec<Compose>,
@@ -350,6 +355,7 @@ impl Session {
             store,
             secrets,
             worker: Worker::new(connector),
+            updates: updates::Updates::new(Arc::new(mailfabrica_update::GitHub)),
             view: MailView::default(),
             bodies: HashMap::new(),
             composes: Vec::new(),
@@ -445,6 +451,7 @@ impl Session {
     /// 处理后台事件，写入存储，刷新视图；并按 `sync_interval_minutes` 触发自动收取。
     /// 有变化时返回 true（界面需要重绘）。每帧调用一次，开销要小。
     pub fn pump(&mut self) -> bool {
+        let update_changed = self.pump_updates();
         let events = self.worker.poll();
         let mut changed = !events.is_empty() && self.apply_events(events);
         let interval = u64::from(self.prefs.sync_interval_minutes) * 60;
@@ -458,7 +465,7 @@ impl Session {
             self.revision += 1;
             changed = true;
         }
-        changed
+        changed || update_changed
     }
 
     /// 阻塞直到后台任务都结束（最多 `timeout`），并处理全部事件。CLI 和测试用。
@@ -471,8 +478,12 @@ impl Session {
             if !events.is_empty() {
                 self.apply_events(events);
             }
-            if self.worker.busy_accounts().is_empty() || Instant::now() >= deadline {
+            self.pump_updates();
+            if (self.worker.busy_accounts().is_empty() && !self.update().busy()) || Instant::now() >= deadline {
                 break;
+            }
+            if self.update().busy() {
+                std::thread::sleep(Duration::from_millis(20));
             }
         }
     }

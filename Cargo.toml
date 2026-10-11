@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
@@ -16,6 +16,7 @@ mailfabrica-rich = { path = "crates/rich" }
 mailfabrica-proto = { path = "crates/proto" }
 mailfabrica-store = { path = "crates/store" }
 mailfabrica-sync = { path = "crates/sync" }
+mailfabrica-update = { path = "crates/update" }
 mailfabrica-html = { path = "crates/html" }
 mailfabrica-engine = { path = "crates/engine" }
 mailfabrica-ui-egui = { path = "crates/ui-egui" }
@@ -29,6 +30,8 @@ log = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 base64 = "0.22"
 tempfile = "3"
+semver = "1"
+sha2 = "0.10"
 
 # mail
 # aws-lc-rs 后端 + prefer-post-quantum：首次握手就带 X25519MLKEM768 密钥。有的邮件服务器只接受这个组，

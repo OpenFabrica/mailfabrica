@@ -14,7 +14,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         cmd!("contacts.remove", "Remove Contact", [], None, "{email}", always, contacts_remove),
         cmd!(query "app.status", "Status", [], None, "{}", always, status),
         cmd!("app.prefs", "Preferences", [], None, "{…Prefs fields}", always, prefs),
-        cmd!("app.dialog", "Open Dialog", [], None, "{name: \"settings\"|\"contacts\"|\"about\"}", always, dialog),
+        cmd!("app.dialog", "Open Dialog", [], None, "{name: \"settings\"|\"contacts\"|\"about\"|\"updates\"}", always, dialog),
     ]
 }
 
@@ -48,6 +48,8 @@ fn contacts_remove(s: &mut Session, p: &Json) -> Result<Json> {
 /// `app.status`：状态栏信息、忙碌账户、错误。
 fn status(s: &mut Session, _: &Json) -> Result<Json> {
     let mut v = serde_json::to_value(&s.status).unwrap_or_default();
+    v["busy"] = json!(s.status.busy || s.update().busy());
+    v["update"] = json!(s.update());
     v["busyAccounts"] = json!(s.worker.busy_accounts());
     v["revision"] = json!(s.revision);
     v["composes"] = json!(s.composes.len());
@@ -85,7 +87,7 @@ fn dialog(s: &mut Session, p: &Json) -> Result<Json> {
     let name = req_str("app.dialog", p, "name")?;
     let init = match name {
         "settings" => serde_json::to_value(&s.prefs).unwrap_or_default(),
-        "contacts" | "about" => json!({}),
+        "contacts" | "about" | "updates" => json!({}),
         other => return Err(bad("app.dialog", format!("unknown dialog `{other}`"))),
     };
     s.ui_requests.push(UiRequest::Dialog(name.to_string(), init));
