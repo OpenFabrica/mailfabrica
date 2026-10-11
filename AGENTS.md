@@ -31,7 +31,8 @@ egui/eframe 界面、一切皆命令、控制通道、MCP、`cargo xtask`。
 - 每个 crate 根上都有 `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`。
 
 ## 素材
-不用 Foxmail/腾讯或任何厂商的图标、图片、字体。图标全部在 `crates/ui-egui/src/icons.rs` 里用代码画。
+不放图片文件，图标全部用代码画：界面图标在 `crates/ui-egui/src/icons.rs`（原创，不用 Foxmail 等客户端的图标）；
+添加账户时邮箱类型的厂商标志（QQ 邮箱、Gmail 等，用户同意使用）在 `crates/ui-egui/src/brands.rs`，画简化版。不用厂商字体。
 中文字体在运行时从系统加载，不放进仓库。
 
 ## 运行与检查

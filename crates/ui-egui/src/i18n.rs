@@ -290,6 +290,40 @@ pub const TABLE: &[(&str, &str)] = &[
     ("{n} messages", "共 {n} 封"),
     ("{n} messages selected", "已选择 {n} 封邮件"),
     ("{n} unread", "未读 {n}"),
+    ("Back", "返回"),
+    ("Choose your mailbox type", "选择你的邮箱类型"),
+    ("QQ Mail", "QQ 邮箱"),
+    ("Tencent Exmail", "腾讯企业邮"),
+    ("NetEase Mail", "网易邮箱"),
+    ("NetEase Enterprise Mail", "网易企业邮箱"),
+    ("Alibaba Enterprise Mail", "阿里企业邮箱"),
+    ("Gmail", "Gmail"),
+    ("iCloud Mail", "iCloud 邮箱"),
+    ("Other Mail", "其他邮箱"),
+    (
+        "QQ Mail needs an authorization code: in QQ Mail on the web, open Settings → Account, enable IMAP/SMTP and generate one.",
+        "QQ 邮箱需要使用授权码：在网页版 QQ 邮箱打开“设置 → 账户”，开启 IMAP/SMTP 服务并生成授权码。",
+    ),
+    (
+        "If secure login is enabled, use a client-specific password instead of the login password.",
+        "如果开启了安全登录，请使用客户端专用密码，而不是登录密码。",
+    ),
+    (
+        "163, 126 and yeah.net need an authorization code: in Settings → POP3/SMTP/IMAP, enable IMAP and generate one.",
+        "163、126、yeah.net 邮箱需要使用授权码：在“设置 → POP3/SMTP/IMAP”里开启 IMAP 服务并生成授权码。",
+    ),
+    (
+        "Use your enterprise mailbox password. If IMAP is turned off, ask your administrator to enable it.",
+        "使用企业邮箱的登录密码。如果 IMAP 服务没有开启，请联系管理员开启。",
+    ),
+    (
+        "Gmail needs an app password: Google Account → Security → 2-Step Verification → App passwords.",
+        "Gmail 需要使用应用专用密码：Google 账号 → 安全性 → 两步验证 → 应用专用密码。",
+    ),
+    (
+        "iCloud needs an app-specific password, which you can create at account.apple.com.",
+        "iCloud 需要使用 App 专用密码，可以在 account.apple.com 生成。",
+    ),
 ];
 
 #[cfg(test)]

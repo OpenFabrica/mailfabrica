@@ -1,4 +1,4 @@
-//! 对话框：添加账户、账户设置、设置、地址簿、关于。
+//! 对话框：添加账户（先选邮箱类型，再填邮箱密码）、账户设置、设置、地址簿、关于。
 //!
 //! 每个对话框的输入都放在 `values`（JSON 字段）里，所以控制通道可以直接驱动：
 //! `ui.dialog {name}` 打开，`ui.dialog.set {field, value}` 改字段，`ui.dialog.confirm` 按确定。
@@ -6,6 +6,7 @@
 use egui::{Rect, Sense, Ui, vec2};
 use serde_json::{Map, Value as Json, json};
 
+use crate::brands;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 use crate::widgets;
@@ -32,6 +33,8 @@ pub struct Dialog {
     pub verifying: Option<String>,
     /// 下一帧把焦点放到密码框（密码/授权码错了，方便直接改）。
     pub focus_password: bool,
+    /// 已经按它预填过服务器的邮箱类型 id（`provider` 字段变了就重新预填）。
+    applied_provider: String,
 }
 
 /// 加密方式选项：(值, 显示名键)。
@@ -54,12 +57,20 @@ impl Dialog {
             detected_for: String::new(),
             verifying: None,
             focus_password: false,
+            applied_provider: String::new(),
         };
         match name {
             "accountAdd" => {
                 for k in ["email", "password", "name", "imapHost", "imapPort", "imapSecurity", "smtpHost", "smtpPort", "smtpSecurity"] {
                     d.values.insert(k.into(), init.get(k).cloned().unwrap_or(json!("")));
                 }
+                // 第一步选邮箱类型（`provider` 为空）；带着邮箱打开时直接到填写页
+                let provider = match init.get("provider").and_then(Json::as_str) {
+                    Some(p) => p.to_string(),
+                    None if !d.s("email").is_empty() => "other".into(),
+                    None => String::new(),
+                };
+                d.values.insert("provider".into(), json!(provider));
             }
             "accountEdit" => {
                 let want = init.get("id").or(init.get("account")).and_then(Json::as_str).map(str::to_string);
@@ -153,6 +164,7 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
     let r = match d.name.as_str() {
         // 正在验证上一次的提交：不重复提交
         "accountAdd" if d.verifying.is_some() => return Err("the account is being verified".into()),
+        "accountAdd" if d.s("provider").is_empty() => return Err("choose a mailbox type first".into()),
         "accountAdd" => {
             let email = d.s("email").trim().to_string();
             if !email.contains('@') {
@@ -302,6 +314,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
             }
             match d.name.as_str() {
                 // 验证期间锁住输入，免得改了的内容和正在验证的不一致
+                "accountAdd" if d.s("provider").is_empty() => provider_picker(app, ui, &mut d),
                 "accountAdd" => {
                     let locked = d.verifying.is_some();
                     ui.add_enabled_ui(!locked, |ui| account_add(app, ui, &mut d));
@@ -316,8 +329,11 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                 error_box(ui, e, &t);
             }
             ui.add_space(16.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 按钮行给固定高度：直接 with_layout 会占满剩余高度，弹窗内容变少（换步骤、收起高级设置）时缩不回去
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 32.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let (ok_label, cancel_label) = match d.name.as_str() {
+                    // 选邮箱类型这一步只有"取消"，点类型本身就进入下一步
+                    "accountAdd" if d.s("provider").is_empty() => (None, lang.t("Cancel")),
                     "accountAdd" => (Some(lang.t("Add")), lang.t("Cancel")),
                     "contacts" | "about" => (None, lang.t("Close")),
                     _ => (Some(lang.t("Save")), lang.t("Cancel")),
@@ -442,14 +458,112 @@ fn detect(app: &mut MailApp, d: &mut Dialog) {
     }
 }
 
+/// 各邮箱类型在密码框下面的提示（怎么拿授权码/专用密码）。
+fn provider_hint(id: &str) -> &'static str {
+    match id {
+        "qq" => "QQ Mail needs an authorization code: in QQ Mail on the web, open Settings → Account, enable IMAP/SMTP and generate one.",
+        "exmail" => "If secure login is enabled, use a client-specific password instead of the login password.",
+        "netease" => "163, 126 and yeah.net need an authorization code: in Settings → POP3/SMTP/IMAP, enable IMAP and generate one.",
+        "qiye163" | "aliqiye" => "Use your enterprise mailbox password. If IMAP is turned off, ask your administrator to enable it.",
+        "gmail" => "Gmail needs an app password: Google Account → Security → 2-Step Verification → App passwords.",
+        "icloud" => "iCloud needs an app-specific password, which you can create at account.apple.com.",
+        _ => "QQ, 163 and similar providers need an authorization code instead of the login password.",
+    }
+}
+
+/// 邮箱类型变了就预填服务器：企业邮箱用固定服务器（算作用户指定，添加时只验证它）；
+/// 其他类型清空服务器栏，按邮箱域名自动探测。
+fn apply_provider(d: &mut Dialog) {
+    let id = d.s("provider");
+    if d.applied_provider == id {
+        return;
+    }
+    d.applied_provider = id.clone();
+    let fixed = mailfabrica_engine::core::provider(&id).and_then(|p| p.server_configs());
+    let sec = |s: mailfabrica_engine::core::Security| serde_json::to_value(s).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    match fixed {
+        Some((imap, smtp)) => {
+            for (cfg, host, port_key, sec_key) in [(imap, "imapHost", "imapPort", "imapSecurity"), (smtp, "smtpHost", "smtpPort", "smtpSecurity")] {
+                d.values.insert(host.into(), json!(cfg.host));
+                d.values.insert(port_key.into(), json!(cfg.port.to_string()));
+                d.values.insert(sec_key.into(), json!(sec(cfg.security)));
+            }
+            d.servers_touched = true;
+        }
+        None => {
+            for k in ["imapHost", "imapPort", "imapSecurity", "smtpHost", "smtpPort", "smtpSecurity"] {
+                d.values.insert(k.into(), json!(""));
+            }
+            d.servers_touched = false;
+            d.detected_for.clear();
+        }
+    }
+}
+
+/// 添加账户第一步：选邮箱类型（学 Foxmail 的"快速添加"）。两列卡片，点一下进入填写页。
+fn provider_picker(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog) {
+    let lang = app.lang();
+    let t = Tokens::get(ui.ctx());
+    ui.label(egui::RichText::new(lang.t("Choose your mailbox type")).color(t.text_dim));
+    ui.add_space(12.0);
+    let gap = 10.0;
+    let w = (ui.available_width() - gap) / 2.0;
+    for row in mailfabrica_engine::core::PROVIDERS.chunks(2) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            for p in row {
+                let (rect, resp) = ui.allocate_exact_size(vec2(w, 60.0), Sense::click());
+                let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                app.target(format!("dialog.provider.{}", p.id), rect);
+                let fill = if resp.hovered() { t.hover } else { t.reader };
+                ui.painter().rect(rect, 10.0, fill, egui::Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+                let icon = Rect::from_center_size(rect.left_center() + vec2(32.0, 0.0), vec2(36.0, 36.0));
+                brands::paint(ui.painter(), icon, p.id);
+                let x = icon.right() + 12.0;
+                let max = rect.right() - x - 28.0;
+                let g = widgets::elided(ui.painter(), lang.t(p.name), theme::ui_bold(14.0), t.text, max);
+                ui.painter().galley(egui::pos2(x, rect.center().y - g.size().y + 1.0), g, t.text);
+                let g = widgets::elided(ui.painter(), p.example, theme::ui_font(12.0), t.text_faint, max);
+                ui.painter().galley(egui::pos2(x, rect.center().y + 3.0), g, t.text_faint);
+                let chev = Rect::from_center_size(rect.right_center() - vec2(18.0, 0.0), vec2(12.0, 12.0));
+                icons::paint(ui.painter(), chev, Icon::ChevronRight, t.text_faint);
+                if resp.clicked() {
+                    d.values.insert("provider".into(), json!(p.id));
+                    d.error = None;
+                }
+            }
+        });
+        ui.add_space(gap);
+    }
+}
+
 /// 添加账户：邮箱、密码/授权码、显示名，可展开的高级设置。
 fn account_add(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog) {
     let lang = app.lang();
     let t = Tokens::get(ui.ctx());
+    apply_provider(d);
+    let prov = mailfabrica_engine::core::provider(&d.s("provider")).or(mailfabrica_engine::core::PROVIDERS.last());
+    // 顶部：返回选类型 + 当前类型的标志和名字
+    ui.horizontal(|ui| {
+        let r = widgets::icon_text_button(ui, Icon::ChevronLeft, lang.t("Back"), t.accent, 13.0);
+        app.target("dialog.back", r.rect);
+        if r.clicked() {
+            d.values.insert("provider".into(), json!(""));
+            d.error = None;
+        }
+        if let Some(p) = prov {
+            ui.add_space(6.0);
+            let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
+            brands::paint(ui.painter(), r, p.id);
+            ui.label(egui::RichText::new(lang.t(p.name)).font(theme::ui_bold(14.0)));
+        }
+    });
+    ui.add_space(8.0);
     ui.label(egui::RichText::new(lang.t("Enter your email address and password. Server settings are filled in automatically.")).color(t.text_dim));
     ui.add_space(10.0);
+    let example = prov.map(|p| p.example).unwrap_or("name@example.com");
     egui::Grid::new("account_add").num_columns(2).spacing(vec2(12.0, 10.0)).min_col_width(90.0).show(ui, |ui| {
-        let r = text_row(ui, d, "email", lang.t("Email"), false, "name@example.com");
+        let r = text_row(ui, d, "email", lang.t("Email"), false, example);
         app.target("dialog.email", r.rect);
         let r = text_row(ui, d, "password", lang.t("Password"), true, lang.t("Password or authorization code"));
         app.target("dialog.password", r.rect);
@@ -461,11 +575,7 @@ fn account_add(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog) {
     });
     detect(app, d);
     ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(lang.t("QQ, 163 and similar providers need an authorization code instead of the login password."))
-            .size(12.0)
-            .color(t.text_faint),
-    );
+    ui.label(egui::RichText::new(lang.t(provider_hint(prov.map(|p| p.id).unwrap_or("other")))).size(12.0).color(t.text_faint));
     ui.add_space(8.0);
     let id = ui.make_persistent_id("advanced");
     let header = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, d.advanced);
@@ -702,4 +812,19 @@ fn about(ui: &mut Ui, lang: Language, t: &Tokens) {
         ui.label(egui::RichText::new(lang.t("A fast, native desktop mail client written in Rust.")).color(t.text_dim));
         ui.label(egui::RichText::new("MIT OR Apache-2.0").size(12.0).color(t.text_faint));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 每个邮箱类型的名字和提示都有中文（它们经变量传给 `t()`，源码扫描测试查不到）。
+    #[test]
+    fn providers_are_translated() {
+        for p in mailfabrica_engine::core::PROVIDERS {
+            for key in [p.name, provider_hint(p.id)] {
+                assert!(Language::Chinese.t(key) != key || key == "Gmail", "missing translation: {key:?}");
+            }
+        }
+    }
 }

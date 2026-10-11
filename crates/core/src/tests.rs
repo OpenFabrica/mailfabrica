@@ -42,6 +42,12 @@ fn presets_and_slug() {
     assert_eq!(hosts(&imaps), ["imap.talkwork.vip", "mail.talkwork.vip", "talkwork.vip"]);
     assert_eq!(hosts(&smtps), ["smtp.talkwork.vip", "mail.talkwork.vip", "talkwork.vip"]);
     assert_eq!(server_candidates("me@qq.com").0.len(), 1, "presets are not guessed");
+    // 邮箱类型：id 唯一，最后一个是"其他"，企业邮箱带固定服务器
+    let ids: std::collections::HashSet<_> = PROVIDERS.iter().map(|p| p.id).collect();
+    assert_eq!(ids.len(), PROVIDERS.len());
+    assert_eq!(PROVIDERS.last().map(|p| p.id), Some("other"));
+    assert_eq!(provider("exmail").and_then(Provider::server_configs).map(|(i, _)| i.host), Some("imap.exmail.qq.com".to_string()));
+    assert!(provider("qq").and_then(Provider::server_configs).is_none());
     assert_eq!(AccountConfig::slug_for("Alice@QQ.com"), "alice-qq-com");
 }
 

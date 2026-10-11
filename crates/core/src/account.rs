@@ -107,6 +107,60 @@ const PRESETS: &[(&[&str], (&str, u16, Security), (&str, u16, Security))] = &[
     (&["zoho.com"], ("imap.zoho.com", 993, Security::Tls), ("smtp.zoho.com", 465, Security::Tls)),
 ];
 
+/// 添加账户时先选的邮箱类型（学 Foxmail 的"快速添加"）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Provider {
+    /// 稳定 id（控制通道、界面状态用）。
+    pub id: &'static str,
+    /// 英文名，界面按语言翻译。
+    pub name: &'static str,
+    /// 邮箱示例，作为输入框的提示。
+    pub example: &'static str,
+    /// 固定的 (IMAP, SMTP)。企业邮箱的域名是公司自己的，没法按域名猜，只能按类型给；
+    /// `None` = 按邮箱域名自动探测（个人邮箱的域名在预设里，"其他邮箱"逐个试）。
+    pub servers: Option<((&'static str, u16, Security), (&'static str, u16, Security))>,
+}
+
+impl Provider {
+    /// 固定服务器转成配置；没有固定服务器时为 None。
+    pub fn server_configs(&self) -> Option<(ServerConfig, ServerConfig)> {
+        self.servers.map(|(i, s)| (ServerConfig::new(i.0, i.1, i.2), ServerConfig::new(s.0, s.1, s.2)))
+    }
+}
+
+/// 可选的邮箱类型，最后一个是"其他邮箱"。只列支持密码（授权码）登录 IMAP 的；
+/// Exchange、Microsoft 365 只能 OAuth 登录，暂不支持，所以不列。
+pub const PROVIDERS: &[Provider] = &[
+    Provider { id: "qq", name: "QQ Mail", example: "name@qq.com", servers: None },
+    Provider {
+        id: "exmail",
+        name: "Tencent Exmail",
+        example: "name@company.com",
+        servers: Some((("imap.exmail.qq.com", 993, Security::Tls), ("smtp.exmail.qq.com", 465, Security::Tls))),
+    },
+    Provider { id: "netease", name: "NetEase Mail", example: "name@163.com", servers: None },
+    Provider {
+        id: "qiye163",
+        name: "NetEase Enterprise Mail",
+        example: "name@company.com",
+        servers: Some((("imap.qiye.163.com", 993, Security::Tls), ("smtp.qiye.163.com", 465, Security::Tls))),
+    },
+    Provider {
+        id: "aliqiye",
+        name: "Alibaba Enterprise Mail",
+        example: "name@company.com",
+        servers: Some((("imap.qiye.aliyun.com", 993, Security::Tls), ("smtp.qiye.aliyun.com", 465, Security::Tls))),
+    },
+    Provider { id: "gmail", name: "Gmail", example: "name@gmail.com", servers: None },
+    Provider { id: "icloud", name: "iCloud Mail", example: "name@icloud.com", servers: None },
+    Provider { id: "other", name: "Other Mail", example: "name@example.com", servers: None },
+];
+
+/// 按 id 找邮箱类型。
+pub fn provider(id: &str) -> Option<&'static Provider> {
+    PROVIDERS.iter().find(|p| p.id == id)
+}
+
 /// 按邮箱域名猜 IMAP/SMTP 服务器（[`server_candidates`] 的第一个）。未知域名用 `imap.<域名>:993` 和 `smtp.<域名>:465`。
 pub fn detect_servers(email: &str) -> (ServerConfig, ServerConfig) {
     let (imap, smtp) = server_candidates(email);

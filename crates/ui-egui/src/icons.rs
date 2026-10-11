@@ -24,6 +24,7 @@ pub enum Icon {
     Close,
     ChevronDown,
     ChevronRight,
+    ChevronLeft,
     Inbox,
     Drafts,
     Sent,
@@ -69,7 +70,7 @@ pub enum Icon {
 
 /// 所有图标变体的列表（测试与图标预览用）。
 #[allow(dead_code)]
-pub const ALL: [Icon; 48] = [
+pub const ALL: [Icon; 49] = [
     Icon::Sync,
     Icon::Compose,
     Icon::Reply,
@@ -84,6 +85,7 @@ pub const ALL: [Icon; 48] = [
     Icon::Close,
     Icon::ChevronDown,
     Icon::ChevronRight,
+    Icon::ChevronLeft,
     Icon::Inbox,
     Icon::Drafts,
     Icon::Sent,
@@ -371,6 +373,7 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
         }
         Icon::ChevronDown => g.line(&[(4.5, 6.2), (8.0, 9.8), (11.5, 6.2)], c),
         Icon::ChevronRight => g.line(&[(6.2, 4.5), (9.8, 8.0), (6.2, 11.5)], c),
+        Icon::ChevronLeft => g.line(&[(9.8, 4.5), (6.2, 8.0), (9.8, 11.5)], c),
         Icon::Inbox => {
             g.closed(&[(2.0, 9.5), (4.2, 3.0), (11.8, 3.0), (14.0, 9.5), (14.0, 13.0), (2.0, 13.0)], c);
             g.line(&[(2.0, 9.5), (5.5, 9.5), (6.5, 11.0), (9.5, 11.0), (10.5, 9.5), (14.0, 9.5)], c);
