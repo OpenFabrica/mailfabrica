@@ -1057,6 +1057,29 @@ fn list_groups_messages_with_the_same_subject() {
     assert_eq!(s.group_of(&key_of(&s, "Lunch?")), None);
 }
 
+/// `message.list` 带 `group: true`：按行分页，每行有封数、未读、发件人和最新一封（命令行、MCP 用）。
+#[test]
+fn message_list_can_group_by_subject() {
+    let (mut s, _fake, _dir) = grouped_setup();
+    let r = s.execute("message.list", json!({"account": ACC, "group": true})).unwrap();
+    assert_eq!((r["total"].as_u64(), r["messageTotal"].as_u64()), (Some(4), Some(6)));
+    let first = &r["rows"][0];
+    assert_eq!(first["group"], "weekly report");
+    assert_eq!((first["count"].as_u64(), first["unread"].as_u64()), (Some(3), Some(3)));
+    assert_eq!(first["senders"], json!(["Carol", "Alice"]));
+    assert_eq!(first["message"]["subject"], "Re: Weekly report");
+    assert_eq!(first["keys"].as_array().map(Vec::len), Some(3));
+    assert!(r["rows"][1]["group"].is_null() && r["rows"][1]["count"] == 1);
+    // 分页按行算
+    let page = s.execute("message.list", json!({"account": ACC, "group": true, "offset": 1, "limit": 2})).unwrap();
+    assert_eq!(page["rows"].as_array().map(Vec::len), Some(2));
+    assert_eq!(page["total"], 4);
+    // 不给 group 时还是原来的一封一行
+    let flat = s.execute("message.list", json!({"account": ACC})).unwrap();
+    assert_eq!(flat["messages"].as_array().map(Vec::len), Some(6));
+    assert!(flat.get("rows").is_none());
+}
+
 #[test]
 fn grouping_pref_off_lists_every_message() {
     let (mut s, _fake, dir) = grouped_setup();

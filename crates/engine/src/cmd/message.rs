@@ -9,7 +9,7 @@ use crate::{BodyState, EngineError, Result, Session};
 /// 本模块的命令。
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "message.list", "List Messages", [], None, "{account?, folder?, limit?, offset?, unreadOnly?}", always, list),
+        cmd!(query "message.list", "List Messages", [], None, "{account?, folder?, limit?, offset?, unreadOnly?, group?}", always, list),
         cmd!(query "message.get", "Get Message", [], None, "{key}", always, get),
         cmd!("message.open", "Open Message", ["Message"], None, "{key?}", has_focus, open),
         cmd!("message.markRead", "Mark as Read", ["Message"], None, "{keys?, read?}", has_selection, mark_read),
@@ -24,6 +24,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 }
 
 /// `message.list`：某个文件夹（只给账户时为它的收件箱；都不给时为当前视图）里的邮件，支持分页和只看未读。
+/// `group: true` 时按主题归类（和界面列表同一套规则），返回 `rows`，分页按行算。
 fn list(s: &mut Session, p: &Json) -> Result<Json> {
     let mut msgs: Vec<MessageMeta> = match (str_param(p, "account"), str_param(p, "folder")) {
         (Some(a), Some(f)) => s.store.messages(a, f)?,
@@ -43,8 +44,45 @@ fn list(s: &mut Session, p: &Json) -> Result<Json> {
     let total = msgs.len();
     let offset = usize::try_from(u64_param(p, "offset").unwrap_or(0)).unwrap_or(usize::MAX);
     let limit = usize::try_from(u64_param(p, "limit").unwrap_or(100).min(10_000)).unwrap_or(100);
+    if bool_param(p, "group").unwrap_or(false) {
+        return Ok(grouped(msgs, offset, limit));
+    }
     let page: Vec<MessageMeta> = msgs.into_iter().skip(offset).take(limit).collect();
     Ok(json!({"total": total, "messages": page}))
+}
+
+/// 按主题归类后的一页：`total` 是行数，`messageTotal` 是邮件数。每行有最新一封的 `message`、封数、未读数、
+/// 红旗、不同的发件人名字和全部邮件键（最新的在前）；单封邮件的行 `group` 为 null。
+fn grouped(mut msgs: Vec<MessageMeta>, offset: usize, limit: usize) -> Json {
+    // 归类以组里第一封作为显示的那封，所以先按日期新的在前排（稳定排序，同一时间保持原顺序）
+    msgs.sort_by_key(|m| std::cmp::Reverse(m.date));
+    let rows = crate::view::build_rows(&msgs, true);
+    let total = rows.len();
+    let page: Vec<Json> = rows
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|r| {
+            let members: Vec<&MessageMeta> = r.members.iter().filter_map(|i| msgs.get(*i)).collect();
+            let mut senders: Vec<String> = Vec::new();
+            for m in &members {
+                let name = m.from.display_name();
+                if !senders.iter().any(|s| s == name) {
+                    senders.push(name.to_string());
+                }
+            }
+            json!({
+                "group": r.group,
+                "count": members.len(),
+                "unread": members.iter().filter(|m| !m.flags.seen).count(),
+                "flagged": members.iter().any(|m| m.flags.flagged),
+                "senders": senders,
+                "keys": members.iter().map(|m| m.key.to_string()).collect::<Vec<_>>(),
+                "message": members.first(),
+            })
+        })
+        .collect();
+    json!({"total": total, "messageTotal": msgs.len(), "rows": page})
 }
 
 /// 正文状态的名字。

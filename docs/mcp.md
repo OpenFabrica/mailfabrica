@@ -47,7 +47,7 @@ JSON 配置（`.mcp.json`、Claude Desktop、其他客户端）：
 | `mail_commands` | `search?` | 全部命令的 id、标签、参数说明、当前是否可用 |
 | `mail_accounts` | — | 账户列表（不含密码） |
 | `mail_folders` | `account` | 文件夹、角色、未读数、总数 |
-| `mail_list` | `account?`, `folder?`, `limit?`, `unreadOnly?` | 邮件列表，新的在前；给 `account` 不给 `folder` 时是收件箱；都不给是当前视图 |
+| `mail_list` | `account?`, `folder?`, `limit?`, `unreadOnly?`, `group?` | 邮件列表，新的在前；给 `account` 不给 `folder` 时是收件箱；都不给是当前视图。`group: true` 时按主题归类，结果在 `rows` 里（每行有封数、未读数、发件人、全部 `keys` 和最新一封 `message`），`limit` 按行算 |
 | `mail_read` | `key` | 邮件头 + 正文文本 + 附件列表；本地没有正文时先下载 |
 | `mail_search` | `query`, `limit?` | 在当前范围搜索（文件夹范围会搜该账户全部文件夹）；搜完会清掉搜索词 |
 | `mail_send` | `to`, `subject`, `body`, `cc?`, `account?` | 写信并发送（`compose.new` → `compose.set` → `compose.send`）；失败时返回服务器的错误 |

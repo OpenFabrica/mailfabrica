@@ -7,7 +7,7 @@
 //! mailfabrica-cli account remove <id>
 //! mailfabrica-cli sync [account]
 //! mailfabrica-cli folders <account> [--json]
-//! mailfabrica-cli list [--account A] [--folder F] [--limit N] [--unread] [--json]
+//! mailfabrica-cli list [--account A] [--folder F] [--limit N] [--unread] [--flat] [--json]
 //! mailfabrica-cli read <key> [--json]
 //! mailfabrica-cli search <query> [--limit N] [--json]
 //! mailfabrica-cli send --to ... [--cc ...] [--subject ...] [--body ... | --body-file F] [--attach PATH]... [--account A]
@@ -46,7 +46,7 @@ const USAGE: &str = "usage: mailfabrica-cli [--data DIR] [--demo] <command>
   account remove <id>
   sync [account]                                         fetch new mail
   folders <account> [--json]
-  list [--account A] [--folder F] [--limit N] [--unread] [--json]
+  list [--account A] [--folder F] [--limit N] [--unread] [--flat] [--json]
   read <key> [--json]                                    key is account/uid/folder, shown by `list`
   search <query> [--limit N] [--json]
   send --to ADDR [--cc ADDR] [--subject S] [--body TEXT | --body-file F] [--attach PATH]... [--account A]
@@ -298,18 +298,48 @@ fn print_messages(msgs: &[Value]) {
     let keys: Vec<String> = msgs.iter().map(|m| key_text(&m["key"])).collect();
     let kw = keys.iter().map(|k| width(k)).max().unwrap_or(0);
     for (m, key) in msgs.iter().zip(&keys) {
-        let f = &m["flags"];
-        let flag = |on: bool, c: char| if on { c } else { '-' };
-        let flags: String = [
-            flag(f["seen"].as_bool() != Some(true), 'U'),
-            flag(f["flagged"].as_bool() == Some(true), 'F'),
-            flag(f["answered"].as_bool() == Some(true), 'R'),
-            flag(m["hasAttachments"].as_bool() == Some(true), 'A'),
-        ]
-        .iter()
-        .collect();
+        let flags = flags_text(m, m["flags"]["seen"].as_bool() != Some(true), m["flags"]["flagged"].as_bool() == Some(true));
         let date = mailfabrica_engine::date::full(m["date"].as_i64().unwrap_or(0));
         let from = clip(m["from"]["name"].as_str().filter(|n| !n.is_empty()).or(m["from"]["email"].as_str()).unwrap_or(""), 24);
+        outln!("{}  {flags}  {date}  {}  {}", pad(key, kw), pad(&from, 24), clip(m["subject"].as_str().unwrap_or(""), 60));
+    }
+}
+
+/// 一行的标记：`U`未读 `F`红旗 `R`已回复 `A`有附件，没有的位置是 `-`。
+fn flags_text(m: &Value, unread: bool, flagged: bool) -> String {
+    let flag = |on: bool, c: char| if on { c } else { '-' };
+    [
+        flag(unread, 'U'),
+        flag(flagged, 'F'),
+        flag(m["flags"]["answered"].as_bool() == Some(true), 'R'),
+        flag(m["hasAttachments"].as_bool() == Some(true), 'A'),
+    ]
+    .iter()
+    .collect()
+}
+
+/// 按主题归类的表格（`message.list` 的 `rows`）：和 [`print_messages`] 同样的列，键和日期取组里最新一封；
+/// 组的发件人列是不同的名字加封数，例如 `星河云安全中心 (4)`，标记是整组汇总（有一封未读就是 `U`）。
+fn print_rows(rows: &[Value]) {
+    if rows.is_empty() {
+        eprintln!("(no messages)");
+        return;
+    }
+    let keys: Vec<String> = rows.iter().map(|r| key_text(&r["message"]["key"])).collect();
+    let kw = keys.iter().map(|k| width(k)).max().unwrap_or(0);
+    for (r, key) in rows.iter().zip(&keys) {
+        let m = &r["message"];
+        let count = r["count"].as_u64().unwrap_or(1);
+        let flags = flags_text(m, r["unread"].as_u64().unwrap_or(0) > 0, r["flagged"].as_bool() == Some(true));
+        let date = mailfabrica_engine::date::full(m["date"].as_i64().unwrap_or(0));
+        let names: Vec<&str> = r["senders"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let from = if count > 1 {
+            // 封数放在名字后面，名字太长时截名字，封数总是看得到
+            let tail = format!(" ({count})");
+            format!("{}{tail}", clip(&names.join(", "), 24 - width(&tail)))
+        } else {
+            clip(names.first().copied().unwrap_or(""), 24)
+        };
         outln!("{}  {flags}  {date}  {}  {}", pad(key, kw), pad(&from, 24), clip(m["subject"].as_str().unwrap_or(""), 60));
     }
 }
@@ -467,7 +497,7 @@ fn folders(g: &Global, args: &[String]) -> Result<(), String> {
 
 /// `list`：邮件列表。
 fn list(g: &Global, args: &[String]) -> Result<(), String> {
-    let a = Args::parse(args, &["account", "folder", "limit"], &["unread", "json"])?;
+    let a = Args::parse(args, &["account", "folder", "limit"], &["unread", "json", "flat"])?;
     a.no_extra(0)?;
     let mut p = json!({"limit": a.num("limit")?.unwrap_or(50)});
     if let Some(acc) = a.opt("account") {
@@ -481,9 +511,14 @@ fn list(g: &Global, args: &[String]) -> Result<(), String> {
         p["unreadOnly"] = json!(true);
     }
     let mut h = open(g)?;
+    // 默认和界面一样：偏好里开了「按主题归类」就归类；`--flat` 一封一行
+    let group = !a.has("flat") && exec(&mut h, "app.prefs", json!({}))?["groupBySubject"].as_bool().unwrap_or(true);
+    p["group"] = json!(group);
     let v = exec(&mut h, "message.list", p)?;
     if a.has("json") {
         outln!("{}", pretty(&v));
+    } else if group {
+        print_rows(v["rows"].as_array().map(Vec::as_slice).unwrap_or_default());
     } else {
         print_messages(&message_array(&v));
     }

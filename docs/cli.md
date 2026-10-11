@@ -24,7 +24,7 @@ cargo install --path apps/mailfabrica-cli     # 或：cargo run -p mailfabrica-c
 | `account remove <id>` | `mailfabrica-cli account remove me-qq-com`，同时删除密码和本地数据 |
 | `sync [account]` | `mailfabrica-cli sync`，收取全部账户；有账户出错时退出码非零 |
 | `folders <account> [--json]` | `mailfabrica-cli folders me-qq-com`，文件夹、角色、未读数 |
-| `list [--account A] [--folder F] [--limit N] [--unread] [--json]` | `mailfabrica-cli list --account me-qq-com --unread --limit 20` |
+| `list [--account A] [--folder F] [--limit N] [--unread] [--flat] [--json]` | `mailfabrica-cli list --account me-qq-com --unread --limit 20` |
 | `read <key> [--json]` | `mailfabrica-cli read me-qq-com/1234/INBOX`，邮件头 + 正文；本地没有正文时先下载 |
 | `search <query> [--limit N] [--json]` | `mailfabrica-cli search 发票` |
 | `send …` | 见下 |
@@ -52,6 +52,17 @@ demo-mailfabrica-dev/12/INBOX  U-R-  2026-10-11 09:30  张三  周报
 
 列：邮件键、标记、日期、发件人、主题。标记四位：`U` 未读，`F` 红旗，`R` 已回复，`A` 有附件，没有的位置是 `-`。
 不给 `--account` 时列当前视图（全部收件箱）；给了 `--account` 不给 `--folder` 时是该账户的 `INBOX`。
+
+和界面一样，默认按主题归类（偏好 `groupBySubject`，界面里列表右上角的菜单或设置里可以关）：同主题的邮件
+（忽略 `Re:`、`Fwd:`、`回复：` 等前缀）合成一行，键、日期、主题取最新一封，发件人列是不同的名字加封数，
+标记是整组汇总（有一封未读就是 `U`）。`--limit` 按行算。`--flat` 一封一行。
+
+```text
+demo-mailfabrica-dev/15/INBOX  U---  2026-10-11 06:20  星河云安全中心 (4)        账号登录提醒：新设备登录
+```
+
+要看组里每一封：`mailfabrica-cli exec view.groups`，或者 `--flat`。`--json` 时归类结果在 `rows` 里
+（每行有 `group`、`count`、`unread`、`flagged`、`senders`、`keys` 和最新一封 `message`）。
 
 ### `send`
 

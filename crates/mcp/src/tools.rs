@@ -111,6 +111,10 @@ pub fn tool_definitions(has_ui: bool) -> Vec<Value> {
                     "folder": string("Folder path, e.g. \"INBOX\" (default INBOX when `account` is given)"),
                     "limit": int("Maximum number of messages (default 50)"),
                     "unreadOnly": boolean("Only unread messages"),
+                    "group": boolean(
+                        "Group messages with the same subject (Re:/Fwd: prefixes ignored) into rows, like the app's list; the result then has \
+                         `rows` (each with `group`, `count`, `unread`, `flagged`, `senders`, `keys` and the newest `message`) instead of `messages`, and `limit` counts rows"
+                    ),
                 }),
                 &[],
             ),
@@ -265,7 +269,7 @@ fn normalize_keys(v: &mut Value) {
 
 /// `mail_list`：给了账户但没给文件夹时默认收件箱。
 fn list(b: &mut dyn Backend, a: &Args) -> Result<Value, String> {
-    let mut p = pick(a, &["account", "folder", "limit", "unreadOnly"]);
+    let mut p = pick(a, &["account", "folder", "limit", "unreadOnly", "group"]);
     if a.get("account").is_some_and(|v| !v.is_null()) && p.get("folder").is_none() {
         p["folder"] = json!("INBOX");
     }
