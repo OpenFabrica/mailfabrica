@@ -66,11 +66,13 @@ pub enum Icon {
     TextColor,
     /// 背景色（荧光笔，下面的颜色条由调用方画）。
     Highlight,
+    /// 排序/视图选项（三条由长到短的横线）。
+    Sort,
 }
 
 /// 所有图标变体的列表（测试与图标预览用）。
 #[allow(dead_code)]
-pub const ALL: [Icon; 49] = [
+pub const ALL: [Icon; 50] = [
     Icon::Sync,
     Icon::Compose,
     Icon::Reply,
@@ -120,6 +122,7 @@ pub const ALL: [Icon; 49] = [
     Icon::ClearFormat,
     Icon::TextColor,
     Icon::Highlight,
+    Icon::Sort,
 ];
 
 /// 设计坐标系中的点（16×16 网格）。
@@ -365,6 +368,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
         Icon::Menu => {
             for y in [4.0, 8.0, 12.0] {
                 g.line(&[(2.5, y), (13.5, y)], c);
+            }
+        }
+        Icon::Sort => {
+            for (y, end) in [(4.0, 13.5), (8.0, 10.5), (12.0, 7.5)] {
+                g.line(&[(2.5, y), (end, y)], c);
             }
         }
         Icon::Close => {

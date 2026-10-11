@@ -70,7 +70,12 @@ fn prefs(s: &mut Session, p: &Json) -> Result<Json> {
     new.prefetch = new.prefetch.min(1_000);
     new.sync_interval_minutes = new.sync_interval_minutes.min(24 * 60);
     new.language = crate::i18n::normalize(&new.language).ok_or_else(|| bad("app.prefs", "`language` must be zh-CN or en"))?.to_string();
+    let regroup = new.group_by_subject != s.prefs.group_by_subject;
     s.prefs = new;
+    // 归类开关变了：列表行要重排
+    if regroup {
+        s.refresh_view();
+    }
     s.save_prefs().map_err(|e| EngineError::Other(format!("could not save preferences: {e}")))?;
     Ok(serde_json::to_value(&s.prefs).unwrap_or_default())
 }

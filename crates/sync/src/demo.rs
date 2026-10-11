@@ -202,36 +202,48 @@ pub(crate) fn messages(email: &str) -> Vec<DemoMessage> {
     m.references = vec![id1, id2];
     d.add("INBOX", UNREAD, local_ts(3, 17, 20), m);
 
-    let mut m = out(
-        who("星河云安全中心", "security@xinghe-cloud.example"),
-        &me,
-        "账号登录提醒：新设备登录",
-        "你的账号刚刚在一台新设备上登录。\n\n- 设备：桌面客户端\n- 地区：上海\n\n如果是你本人操作，可以忽略这封邮件。否则请尽快修改密码。\n",
-    );
-    // 典型的通知类 HTML：居中卡片、圆角边框、分割线、圆角按钮、页脚小字，标志是内嵌的 SVG（演示模式不联网）
-    m.html = Some(format!(
-        "<!DOCTYPE html><html><body style=\"margin:0;padding:0\" bgcolor=\"#FFFFFF\">\
-         <table width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\"><tr height=\"32\"><td></td></tr><tr align=\"center\"><td>\
-         <table border=\"0\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:516px;min-width:220px\"><tr><td>\
-         <div style=\"border:thin solid #dadce0;border-radius:8px;padding:40px 20px\" align=\"center\">\
-         <img src=\"data:image/svg+xml;base64,{logo}\" width=\"40\" height=\"40\" alt=\"星河云\" style=\"margin-bottom:16px\">\
-         <div style=\"border-bottom:thin solid #dadce0;color:rgba(0,0,0,0.87);line-height:32px;padding-bottom:24px;text-align:center\">\
-         <div style=\"font-size:24px\">新设备登录了你的账号</div>\
-         <div style=\"font-size:14px;line-height:20px;margin-top:8px\">{email}</div></div>\
-         <div style=\"font-size:14px;color:rgba(0,0,0,0.87);line-height:20px;padding-top:20px;text-align:center\">\
-         你的星河云账号刚刚在一台新设备（桌面客户端，上海）上登录。如果是你本人操作，可以忽略这封邮件；否则请立即检查账号安全。\
-         <div style=\"padding-top:32px;text-align:center\"><a href=\"https://xinghe-cloud.example/security\" \
-         style=\"line-height:16px;color:#ffffff;font-weight:500;text-decoration:none;font-size:14px;display:inline-block;padding:12px 24px;\
-         background-color:#0b57d0;border-radius:9999px;min-width:64px\">查看活动</a></div></div>\
-         <div style=\"padding-top:20px;font-size:12px;line-height:16px;color:#5f6368;text-align:center\">也可以在这里查看安全动态：<br>\
-         <a href=\"https://xinghe-cloud.example/notifications\" style=\"text-decoration:none;color:#4285F4\">https://xinghe-cloud.example/notifications</a></div>\
-         </div><div style=\"color:rgba(0,0,0,0.54);font-size:11px;line-height:18px;padding-top:12px;text-align:center\">\
-         <div>这封邮件用于通知你的账号和服务的重要变化。</div><div>© 2026 星河云</div></div>\
-         </td></tr></table></td></tr><tr height=\"32\"><td></td></tr></table></body></html>",
-        logo = base64_svg(XINGHE_LOGO),
-        email = email,
-    ));
-    d.add("INBOX", SEEN, local_ts(2, 13, 10), m);
+    // 同一个发件人、同一个主题的登录提醒：列表里按主题归成一组（9 天前、6 天前、2 天前、今天各一封）
+    for (days, hour, min, device, place, flags) in [
+        (9, 21, 5, "手机客户端", "杭州", SEEN),
+        (6, 8, 30, "网页版", "北京", SEEN),
+        (2, 13, 10, "桌面客户端", "上海", SEEN),
+        (0, 6, 20, "平板客户端", "深圳", UNREAD),
+    ] {
+        let mut m = out(
+            who("星河云安全中心", "security@xinghe-cloud.example"),
+            &me,
+            "账号登录提醒：新设备登录",
+            &format!(
+                "你的账号刚刚在一台新设备上登录。\n\n- 设备：{device}\n- 地区：{place}\n\n如果是你本人操作，可以忽略这封邮件。否则请尽快修改密码。\n"
+            ),
+        );
+        if days == 2 {
+            // 典型的通知类 HTML：居中卡片、圆角边框、分割线、圆角按钮、页脚小字，标志是内嵌的 SVG（演示模式不联网）
+            m.html = Some(format!(
+                "<!DOCTYPE html><html><body style=\"margin:0;padding:0\" bgcolor=\"#FFFFFF\">\
+                 <table width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\"><tr height=\"32\"><td></td></tr><tr align=\"center\"><td>\
+                 <table border=\"0\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:516px;min-width:220px\"><tr><td>\
+                 <div style=\"border:thin solid #dadce0;border-radius:8px;padding:40px 20px\" align=\"center\">\
+                 <img src=\"data:image/svg+xml;base64,{logo}\" width=\"40\" height=\"40\" alt=\"星河云\" style=\"margin-bottom:16px\">\
+                 <div style=\"border-bottom:thin solid #dadce0;color:rgba(0,0,0,0.87);line-height:32px;padding-bottom:24px;text-align:center\">\
+                 <div style=\"font-size:24px\">新设备登录了你的账号</div>\
+                 <div style=\"font-size:14px;line-height:20px;margin-top:8px\">{email}</div></div>\
+                 <div style=\"font-size:14px;color:rgba(0,0,0,0.87);line-height:20px;padding-top:20px;text-align:center\">\
+                 你的星河云账号刚刚在一台新设备（桌面客户端，上海）上登录。如果是你本人操作，可以忽略这封邮件；否则请立即检查账号安全。\
+                 <div style=\"padding-top:32px;text-align:center\"><a href=\"https://xinghe-cloud.example/security\" \
+                 style=\"line-height:16px;color:#ffffff;font-weight:500;text-decoration:none;font-size:14px;display:inline-block;padding:12px 24px;\
+                 background-color:#0b57d0;border-radius:9999px;min-width:64px\">查看活动</a></div></div>\
+                 <div style=\"padding-top:20px;font-size:12px;line-height:16px;color:#5f6368;text-align:center\">也可以在这里查看安全动态：<br>\
+                 <a href=\"https://xinghe-cloud.example/notifications\" style=\"text-decoration:none;color:#4285F4\">https://xinghe-cloud.example/notifications</a></div>\
+                 </div><div style=\"color:rgba(0,0,0,0.54);font-size:11px;line-height:18px;padding-top:12px;text-align:center\">\
+                 <div>这封邮件用于通知你的账号和服务的重要变化。</div><div>© 2026 星河云</div></div>\
+                 </td></tr></table></td></tr><tr height=\"32\"><td></td></tr></table></body></html>",
+                logo = base64_svg(XINGHE_LOGO),
+                email = email,
+            ));
+        }
+        d.add("INBOX", flags, local_ts(days, hour, min), m);
+    }
 
     // 昨天
     let m = out(
@@ -457,6 +469,9 @@ mod tests {
         assert!(all.iter().filter(|m| m.flags.flagged).count() >= 2);
         assert!(all.iter().filter(|m| !m.flags.seen).count() >= 3);
         assert!(all.iter().any(|m| m.folder == "Drafts" && m.flags.draft && m.flags.seen));
+        // 至少有一组 3 封以上同主题的收件箱邮件（演示按主题归类）
+        let same = all.iter().filter(|m| m.folder == "INBOX" && String::from_utf8_lossy(&m.raw).contains("security@xinghe-cloud.example")).count();
+        assert!(same >= 3, "{same}");
     }
 
     /// 每封邮件都有头体分隔和 Message-ID。

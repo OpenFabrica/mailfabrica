@@ -75,6 +75,8 @@ pub struct Prefs {
     pub language: String,
     /// 新写信窗口默认用超文本（富文本）格式。
     pub compose_rich: bool,
+    /// 邮件列表按主题归类：主题相同（去掉回复/转发前缀后）的邮件合成一行（学 Foxmail）。
+    pub group_by_subject: bool,
 }
 
 impl Default for Prefs {
@@ -89,6 +91,7 @@ impl Default for Prefs {
             chinese_quotes: true,
             language: "zh-CN".into(),
             compose_rich: true,
+            group_by_subject: true,
         }
     }
 }
@@ -117,10 +120,47 @@ pub struct MailView {
     pub query: String,
     /// 列表内容，按日期倒序。
     pub messages: Vec<MessageMeta>,
+    /// 列表的行（界面按它画）：一封邮件一行，或同主题的一组一行（`Prefs::group_by_subject`）。
+    /// 按每行最新一封的日期倒序。不归类时每封邮件一行。
+    pub rows: Vec<ListRow>,
     /// 选中的邮件（多选）。
     pub selected: Vec<MsgKey>,
     /// 阅读窗格显示的邮件（通常是最后点击的那封）。
     pub focused: Option<MsgKey>,
+    /// 打开的主题组（归类键）：阅读窗格显示这一组的邮件列表。打开时 `selected` 是组里全部邮件、
+    /// `focused` 为空，所以删除/移动/标记作用于整组，回复/转发不可用。
+    pub group: Option<String>,
+}
+
+/// 邮件列表里的一行：一封邮件，或按主题归类的一组（至少两封）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRow {
+    /// 这一行的邮件在 `MailView::messages` 里的下标，按日期倒序（第一个最新，行上显示它）。
+    pub members: Vec<usize>,
+    /// 归类键（`mime::subject_key` 归一化后的主题）；单封邮件的行为 `None`。
+    pub group: Option<String>,
+}
+
+/// 一个主题组的摘要（`view.groups`、控制通道 `ui.inspect` 用）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupInfo {
+    /// 归类键。
+    pub group: String,
+    /// 最新一封的主题（显示用）。
+    pub subject: String,
+    pub count: usize,
+    pub unread: usize,
+    pub flagged: bool,
+    /// 组里的邮件，最新的在前（序列化成字符串形式 `账户/uid/文件夹`，和命令参数一致）。
+    #[serde(serialize_with = "keys_as_strings")]
+    pub keys: Vec<MsgKey>,
+}
+
+/// 邮件键列表按字符串形式序列化。
+fn keys_as_strings<S: serde::Serializer>(keys: &[MsgKey], s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.collect_seq(keys.iter().map(ToString::to_string))
 }
 
 /// 一封邮件正文的加载状态。
@@ -473,6 +513,40 @@ impl Session {
 
     pub fn view(&self) -> &MailView {
         &self.view
+    }
+
+    /// 一个主题组里的邮件（最新的在前）；没有这个组时为空。
+    pub fn group_messages(&self, group: &str) -> Vec<&MessageMeta> {
+        self.view
+            .rows
+            .iter()
+            .find(|r| r.group.as_deref() == Some(group))
+            .map(|r| r.members.iter().filter_map(|i| self.view.messages.get(*i)).collect())
+            .unwrap_or_default()
+    }
+
+    /// 这封邮件所在的主题组的归类键（不在任何组里时为 `None`）。
+    pub fn group_of(&self, key: &MsgKey) -> Option<&str> {
+        let mi = self.view.messages.iter().position(|m| &m.key == key)?;
+        self.view.rows.iter().find(|r| r.members.contains(&mi)).and_then(|r| r.group.as_deref())
+    }
+
+    /// 当前列表里的全部主题组（至少两封的行）的摘要，按列表顺序。
+    pub fn groups(&self) -> Vec<GroupInfo> {
+        self.view.rows.iter().filter_map(|r| r.group.as_deref()).map(|g| self.group_info(g)).collect()
+    }
+
+    /// 一个主题组的摘要；没有这个组时 `count` 为 0。
+    pub fn group_info(&self, group: &str) -> GroupInfo {
+        let msgs = self.group_messages(group);
+        GroupInfo {
+            group: group.to_string(),
+            subject: msgs.first().map(|m| m.subject.clone()).unwrap_or_default(),
+            count: msgs.len(),
+            unread: msgs.iter().filter(|m| !m.flags.seen).count(),
+            flagged: msgs.iter().any(|m| m.flags.flagged),
+            keys: msgs.iter().map(|m| m.key.clone()).collect(),
+        }
     }
 
     /// 列表中的一封邮件。

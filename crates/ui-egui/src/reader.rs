@@ -1,6 +1,9 @@
 //! 右侧阅读窗格：主题、发件人/收件人/抄送/时间、红旗开关、「HTML | 纯文本」切换、附件卡片、正文，
 //! 底部是 Foxmail 式的快速回复框。
 //!
+//! 列表里选中一个主题组（同主题归成一行）时，窗格显示"主题包括“…”的所有邮件 · N"和组里每封邮件
+//! （发件人、预览、日期），点一封打开它；打开的邮件属于某个主题组时，顶上有一条返回这个组的横条。
+//!
 //! 有 HTML 正文时默认按格式显示：用 blitz 排版渲染（[`crate::htmlbody`]），效果接近浏览器，远程图片自动加载。
 //! 渲染器出错时退回旧办法：`RichDoc::from_html` 转成富文本，用和写信编辑器相同的排版（[`crate::richview`]）。
 //! 纯文本模式（或没有 HTML）显示 `MessageView.text`，自动识别网址。
@@ -243,6 +246,10 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     let lang = app.lang();
     app.reader.shown = None;
     let Some(key) = app.focused() else {
+        if let Some(g) = app.session.view().group.clone() {
+            group_list(app, ui, &g);
+            return;
+        }
         let n = app.session.view().selected.len();
         placeholder(
             ui,
@@ -261,6 +268,9 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         BodyState::Ready(v) => Some(v.clone()),
         _ => None,
     };
+    if let Some(g) = app.session.group_of(&key).map(str::to_string) {
+        group_back(app, ui, &g, &t);
+    }
     quick_reply(app, ui, &key, meta.as_ref(), view.as_deref());
     egui::ScrollArea::vertical().id_salt(("reader_scroll", key.to_string())).auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 20, bottom: 24 }).show(ui, |ui| {
@@ -294,6 +304,105 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
                 }
             }
         });
+    });
+}
+
+/// 主题组的标题文字：`主题包括“…”的所有邮件`（主题为空时用"（无主题）"）。
+fn group_title(lang: Language, subject: &str) -> String {
+    let subject = if subject.trim().is_empty() { lang.t("(no subject)") } else { subject.trim() };
+    lang.f("All messages with subject “{subject}”", &[("subject", subject)])
+}
+
+/// 主题组视图：标题"主题包括“…”的所有邮件 · N"，下面每封邮件一行（未读蓝点、发件人、日期、预览），点一行打开那封。
+fn group_list(app: &mut MailApp, ui: &mut Ui, group: &str) {
+    let t = Tokens::get(ui.ctx());
+    let lang = app.lang();
+    let info = app.session.group_info(group);
+    // 先把要画的东西取出来，画的时候才能往 app 里登记目标和命令
+    let items: Vec<(MsgKey, String, String, i64, bool, bool)> = app
+        .session
+        .group_messages(group)
+        .into_iter()
+        .map(|m| {
+            let role = app.session.folders(&m.key.account).iter().find(|f| f.path == m.key.folder).map(|f| f.role).unwrap_or_default();
+            // 还没下载正文时没有预览，用主题代替
+            let text = if m.preview.trim().is_empty() { m.subject.clone() } else { m.preview.trim().to_string() };
+            (m.key.clone(), crate::list::who_of(m, role, lang), text, m.date, !m.flags.seen, m.flags.flagged)
+        })
+        .collect();
+    egui::ScrollArea::vertical().id_salt(("group_scroll", group.to_string())).auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 20, bottom: 24 }).show(ui, |ui| {
+            let w = ui.available_width();
+            ui.set_width(w);
+            let mut job = egui::text::LayoutJob::default();
+            job.append(&group_title(lang, &info.subject), 0.0, egui::TextFormat::simple(theme::ui_bold(18.0), t.text));
+            job.append(&format!(" · {}", info.count), 0.0, egui::TextFormat::simple(theme::ui_font(16.0), t.text_faint));
+            job.wrap.max_width = w;
+            ui.add(egui::Label::new(job).wrap());
+            ui.add_space(14.0);
+            let r = ui.max_rect();
+            let y = ui.cursor().top();
+            ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, t.separator));
+            ui.add_space(4.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (key, who, text, ts, unread, flagged) in items {
+                let (rect, resp) = ui.allocate_exact_size(vec2(w, 62.0), Sense::click());
+                app.target(format!("reader.group.{key}"), rect);
+                let p = ui.painter();
+                if resp.hovered() {
+                    p.rect_filled(rect, 6.0, t.group);
+                }
+                p.line_segment(
+                    [pos2(rect.left() + 24.0, rect.bottom() - 0.5), pos2(rect.right(), rect.bottom() - 0.5)],
+                    Stroke::new(1.0, t.separator),
+                );
+                let y1 = rect.top() + 21.0;
+                if unread {
+                    p.circle_filled(pos2(rect.left() + 11.0, y1), 4.0, t.accent);
+                }
+                let left = rect.left() + 24.0;
+                let right = rect.right() - 10.0;
+                let dg = p.layout_no_wrap(mailfabrica_engine::date::date(ts).replace('-', "/"), theme::ui_font(12.0), t.text_faint);
+                let date_w = dg.size().x;
+                p.galley(pos2(right - date_w, y1 - dg.size().y / 2.0), dg, t.text_faint);
+                let mut used = date_w + 10.0;
+                if flagged {
+                    icons::paint(p, Rect::from_center_size(pos2(right - used - 7.0, y1), vec2(14.0, 14.0)), Icon::Flag, t.flag);
+                    used += 20.0;
+                }
+                let font = if unread { theme::ui_bold(14.0) } else { theme::ui_font(14.0) };
+                let ng = widgets::elided(p, &who, font, t.text, right - used - left);
+                p.galley(pos2(left, y1 - ng.size().y / 2.0), ng, t.text);
+                let pg = widgets::elided(p, &text, theme::ui_font(12.5), t.text_dim, right - left);
+                p.galley(pos2(left, rect.top() + 43.0 - pg.size().y / 2.0), pg, t.text_dim);
+                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    app.defer("view.select", json!({"key": key.to_string()}));
+                }
+            }
+        });
+    });
+}
+
+/// 打开的邮件属于某个主题组时，阅读窗格顶上的横条："‹ 主题包括“…”的所有邮件 · N"，点一下回到组视图。
+fn group_back(app: &mut MailApp, ui: &mut Ui, group: &str, t: &Tokens) {
+    let lang = app.lang();
+    let info = app.session.group_info(group);
+    let text = format!("{} · {}", group_title(lang, &info.subject), info.count);
+    egui::Panel::top("group_back").exact_size(34.0).frame(egui::Frame::NONE.fill(t.reader)).show(ui, |ui| {
+        let r = ui.max_rect();
+        let resp = ui.interact(r, egui::Id::new("group_back"), Sense::click());
+        app.target("reader.group.back", r);
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(r, 0.0, t.group);
+        }
+        p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.separator));
+        icons::paint(p, Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(14.0, 14.0)), Icon::ChevronLeft, t.accent);
+        let g = widgets::elided(p, &text, theme::ui_font(13.0), t.accent, r.width() - 36.0 - 20.0);
+        p.galley(pos2(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, t.accent);
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            app.defer("view.selectGroup", json!({"group": group}));
+        }
     });
 }
 

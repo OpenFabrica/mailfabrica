@@ -4,7 +4,7 @@ use mailfabrica_core::{Flag, Folder, MsgKey};
 use mailfabrica_sync::JobKind;
 use serde_json::{Value as Json, json};
 
-use super::{CommandSpec, always, bad, bool_param, cmd, has_account, has_messages, keys_param, ok, req_str, str_param};
+use super::{CommandSpec, always, bad, bool_param, cmd, has_account, has_messages, key_param, keys_param, ok, req_str, str_param};
 use crate::events::Action;
 use crate::{EngineError, Result, Scope, Session};
 
@@ -15,6 +15,8 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         cmd!("view.scope", "Show Folder", [], None, "{account, folder} | {kind: \"allInboxes\"|\"unread\"|\"flagged\"}", always, scope),
         cmd!("view.search", "Search", ["View"], None, "{query}", always, search),
         cmd!("view.select", "Select Messages", [], None, "{key} | {keys}, extend?", always, select),
+        cmd!("view.selectGroup", "Show Subject Group", [], None, "{group} | {subject} | {key}", has_messages, select_group),
+        cmd!(query "view.groups", "List Subject Groups", [], None, "{}", always, groups),
         cmd!("view.next", "Next Message", ["View"], None, "{}", has_messages, next),
         cmd!("view.prev", "Previous Message", ["View"], None, "{}", has_messages, prev),
         cmd!(query "folder.list", "List Folders", [], None, "{account?}", always, list_folders),
@@ -106,17 +108,49 @@ fn select(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(json!({"selected": s.view.selected.iter().map(MsgKey::to_string).collect::<Vec<_>>()}))
 }
 
-/// 选中列表里相对当前聚焦邮件偏移 `delta` 的那封。
+/// `view.selectGroup`：打开一个主题组（`group` 归类键、`subject` 任意写法的主题、或组里某封邮件的 `key`）。
+fn select_group(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "view.selectGroup";
+    let group = if let Some(g) = str_param(p, "group") {
+        g.to_string()
+    } else if let Some(subject) = str_param(p, "subject") {
+        mailfabrica_mime::subject_key(subject)
+    } else if p.get("key").is_some_and(|v| !v.is_null()) {
+        let key = key_param(s, CMD, p)?;
+        s.group_of(&key).map(str::to_string).ok_or_else(|| bad(CMD, format!("message {key} is not in a subject group")))?
+    } else {
+        return Err(bad(CMD, "`group`, `subject` or `key` is required"));
+    };
+    s.select_group(&group).map_err(|e| bad(CMD, e.to_string()))?;
+    Ok(serde_json::to_value(s.group_info(&group)).unwrap_or_default())
+}
+
+/// `view.groups`：是否按主题归类、列表行数和当前列表里的全部主题组。
+fn groups(s: &mut Session, _: &Json) -> Result<Json> {
+    Ok(json!({
+        "enabled": s.prefs.group_by_subject,
+        "rows": s.view.rows.len(),
+        "open": s.view.group,
+        "groups": s.groups(),
+    }))
+}
+
+/// 选中列表里相对当前行偏移 `delta` 的那一行（主题组算一行，选中它就打开整组）。
 fn step(s: &mut Session, delta: isize) -> Result<Json> {
-    let list = &s.view.messages;
-    let cur = s.view.focused.as_ref().and_then(|k| list.iter().position(|m| &m.key == k));
-    let idx = match cur {
-        Some(i) => i.saturating_add_signed(delta).min(list.len().saturating_sub(1)),
+    let len = s.view.rows.len();
+    if len == 0 {
+        return Err(EngineError::Other("the list is empty".into()));
+    }
+    let idx = match s.current_row() {
+        Some(i) => i.saturating_add_signed(delta).min(len - 1),
         None => 0,
     };
-    let Some(key) = list.get(idx).map(|m| m.key.clone()) else { return Err(EngineError::Other("the list is empty".into())) };
-    s.select_keys(vec![key.clone()], false, true);
-    Ok(json!({"key": key.to_string()}))
+    let (key, group) = s.select_row(idx)?;
+    let mut out = json!({"key": key.to_string()});
+    if let Some(g) = group {
+        out["group"] = json!(g);
+    }
+    Ok(out)
 }
 
 /// `view.next`：下一封。

@@ -1,11 +1,12 @@
-//! 中间的邮件列表：标题行（范围名 + 数量），按"今天/昨天/本周/本月/更早"分组的邮件行。
+//! 中间的邮件列表：标题行（范围名 + 数量 + 视图菜单），按"今天/昨天/本周/本月/更早"分组的邮件行。
+//! 行来自引擎的 `MailView::rows`：一封邮件一行，或同主题的一组一行（发件人后面带封数角标）。
 //! 只画可见的行（虚拟滚动），一万封邮件也流畅。
 
 use std::collections::HashMap;
 
 use egui::{Rect, Sense, Stroke, Ui, pos2, vec2};
 use mailfabrica_engine::date::{self, DateBucket};
-use mailfabrica_engine::{FolderRole, MessageMeta, MsgKey};
+use mailfabrica_engine::{FolderRole, ListRow, MessageMeta, MsgKey};
 use serde_json::json;
 
 use crate::icons::{self, Icon};
@@ -18,11 +19,11 @@ const HEADER_H: f32 = 28.0;
 /// 邮件行高度（三行文字）。
 const ROW_H: f32 = 68.0;
 
-/// 列表里的一行：分组头或一封邮件（`messages` 里的下标）。
+/// 列表里的一行：日期分组头，或引擎列表行（`MailView::rows` 里的下标，一封邮件或一个主题组）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Row {
     Header(DateBucket),
-    Msg(usize),
+    Item(usize),
 }
 
 /// 列表的界面状态：分组后的行和每行的纵向位置（缓存），滚动请求。
@@ -31,7 +32,7 @@ pub struct ListState {
     rows: Vec<Row>,
     tops: Vec<f32>,
     total: f32,
-    cache_key: Option<(u64, usize, usize, i64, i64)>,
+    cache_key: Option<(u64, usize, usize, usize, i64, i64)>,
     /// 下一帧把聚焦的邮件滚到可见处（键盘切换后）。
     pub scroll_to_focus: bool,
     /// 下一帧滚回顶部（切换范围后）。
@@ -72,7 +73,7 @@ pub fn list_time(lang: Language, ts: i64, now: i64) -> String {
     }
 }
 
-/// 把按日期倒序的邮件分组成行（每组前插一个分组头），返回 (行, 每行顶部位置, 总高度)。
+/// 把按日期倒序的列表行分组（每组前插一个分组头），返回 (行, 每行顶部位置, 总高度)。`dates` 是每行最新一封的日期。
 pub fn group_rows(dates: &[i64], now: i64) -> (Vec<Row>, Vec<f32>, f32) {
     let mut rows = Vec::with_capacity(dates.len() + 5);
     let mut tops = Vec::with_capacity(dates.len() + 5);
@@ -86,7 +87,7 @@ pub fn group_rows(dates: &[i64], now: i64) -> (Vec<Row>, Vec<f32>, f32) {
             y += HEADER_H;
             last = Some(b);
         }
-        rows.push(Row::Msg(i));
+        rows.push(Row::Item(i));
         tops.push(y);
         y += ROW_H;
     }
@@ -94,16 +95,16 @@ pub fn group_rows(dates: &[i64], now: i64) -> (Vec<Row>, Vec<f32>, f32) {
 }
 
 impl ListState {
-    /// 需要时重新分组（引擎状态、邮件数或日期变了才算）。
-    fn refresh(&mut self, app_messages: &[MessageMeta], revision: u64) {
+    /// 需要时重新分组（引擎状态、邮件数、行数或日期变了才算）。
+    fn refresh(&mut self, app_messages: &[MessageMeta], list_rows: &[ListRow], revision: u64) {
         let now = date::now();
         let first = app_messages.first().map(|m| m.date).unwrap_or(0);
         // 每分钟最多重算一次：跨过午夜时"今天/昨天"要变
-        let key = (revision, app_messages.len(), app_messages.as_ptr() as usize, first, now / 60);
+        let key = (revision, app_messages.len(), list_rows.len(), app_messages.as_ptr() as usize, first, now / 60);
         if self.cache_key == Some(key) {
             return;
         }
-        let dates: Vec<i64> = app_messages.iter().map(|m| m.date).collect();
+        let dates: Vec<i64> = list_rows.iter().map(|r| r.members.first().and_then(|i| app_messages.get(*i)).map(|m| m.date).unwrap_or(0)).collect();
         let (rows, tops, total) = group_rows(&dates, now);
         self.rows = rows;
         self.tops = tops;
@@ -137,11 +138,15 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         let title = if query.is_empty() { crate::sidebar::scope_name(app, &scope) } else { lang.f("Search: {query}", &[("query", &query)]) };
         let n = lang.f("{n} messages", &[("n", &count.to_string())]);
         let ng = ui.painter().layout_no_wrap(n, theme::ui_font(12.0), t.text_faint);
-        let max_w = r.width() - 32.0 - ng.size().x - 10.0;
-        let g = widgets::elided(ui.painter(), &title, theme::ui_bold(15.0), t.text, max_w);
         let y = r.center().y;
+        // 右上角的视图菜单（按主题归类开关）
+        let btn = Rect::from_center_size(pos2(r.right() - 24.0, y), vec2(28.0, 28.0));
+        let count_right = btn.left() - 4.0;
+        let max_w = count_right - ng.size().x - 10.0 - (r.left() + 16.0);
+        let g = widgets::elided(ui.painter(), &title, theme::ui_bold(15.0), t.text, max_w);
         ui.painter().galley(pos2(r.left() + 16.0, y - g.size().y / 2.0), g, t.text);
-        ui.painter().galley(pos2(r.right() - 16.0 - ng.size().x, y - ng.size().y / 2.0), ng, t.text_faint);
+        ui.painter().galley(pos2(count_right - ng.size().x, y - ng.size().y / 2.0), ng, t.text_faint);
+        view_menu(app, ui, btn);
     });
     if app.session.accounts().is_empty() {
         empty_state(app, ui, true);
@@ -152,7 +157,7 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         return;
     }
     let revision = app.session.revision();
-    app.list.refresh(&app.session.view().messages, revision);
+    app.list.refresh(&app.session.view().messages, &app.session.view().rows, revision);
     let scroll_to_top = std::mem::take(&mut app.list.scroll_to_top);
     let scroll_to_focus = std::mem::take(&mut app.list.scroll_to_focus);
     let mut area = egui::ScrollArea::vertical().id_salt(("list_scroll", format!("{scope:?}"))).auto_shrink([false, false]);
@@ -172,10 +177,11 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         let view = app_ref.session.view();
         let messages = &view.messages;
         let focused = view.focused.as_ref();
+        // 当前行（聚焦邮件所在行或打开的主题组）：键盘切换后滚到它，Shift 范围选以它为起点
+        let current = app_ref.session.current_row();
         if scroll_to_focus
-            && let Some(fk) = focused
-            && let Some(mi) = messages.iter().position(|m| m.key == *fk)
-            && let Some(ri) = list.rows.iter().position(|r| *r == Row::Msg(mi))
+            && let Some(cur) = current
+            && let Some(ri) = list.rows.iter().position(|r| *r == Row::Item(cur))
         {
             let top = list.tops.get(ri).copied().unwrap_or(0.0);
             ui.scroll_to_rect(Rect::from_min_size(origin + vec2(0.0, top), vec2(width, ROW_H)), None);
@@ -200,17 +206,24 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
                         t.text_dim,
                     );
                 }
-                Row::Msg(mi) => {
-                    let Some(m) = messages.get(mi) else { break };
+                Row::Item(ri) => {
+                    let Some(row) = view.rows.get(ri) else { break };
+                    let members: Vec<&MessageMeta> = row.members.iter().filter_map(|i| messages.get(*i)).collect();
+                    let Some(m) = members.first().copied() else { break };
                     let role = *roles.entry((m.key.account.clone(), m.key.folder.clone())).or_insert_with(|| {
                         app_ref.session.folders(&m.key.account).iter().find(|f| f.path == m.key.folder).map(|f| f.role).unwrap_or_default()
                     });
-                    let is_sel = view.selected.contains(&m.key) || focused == Some(&m.key);
+                    let in_sel = |k: &MsgKey| view.selected.contains(k) || focused == Some(k);
+                    // 组：打开着、或组里有选中/正在看的邮件都高亮；右键时只有整组都选中才不重新选
+                    let opened = row.group.is_some() && view.group == row.group;
+                    let is_sel = opened || members.iter().any(|x| in_sel(&x.key));
+                    let whole = opened || members.iter().all(|x| in_sel(&x.key));
                     let resp = ui.interact(rect, egui::Id::new(("msg_row", &m.key)), Sense::click());
-                    paint_row(ui, rect, m, role, is_sel, resp.hovered(), lang, now, &t);
+                    paint_row(ui, rect, &members, role, is_sel, resp.hovered(), lang, now, &t);
                     targets.push((format!("list.row.{}", m.key), rect));
-                    row_input(&resp, m, role, messages, focused, is_sel, &mut actions);
-                    resp.context_menu(|ui| row_menu(app_ref, ui, m, &mut actions));
+                    let ctx = RowCtx { index: ri, row, rows: &view.rows, messages, selected: &view.selected, anchor: current, role };
+                    row_input(&resp, &ctx, whole, &mut actions);
+                    resp.context_menu(|ui| row_menu(app_ref, ui, &members, &mut actions));
                 }
             }
             i += 1;
@@ -220,63 +233,89 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
     app.targets.extend(targets);
 }
 
-/// 处理一行上的鼠标操作：单击选中、Cmd 追加、Shift 范围选、双击草稿继续编辑、右键先选中。
-fn row_input(
-    resp: &egui::Response,
-    m: &MessageMeta,
+/// 处理一行鼠标操作需要的上下文：这一行、全部行、邮件、当前选择、范围选的起点行、文件夹角色。
+struct RowCtx<'a> {
+    index: usize,
+    row: &'a ListRow,
+    rows: &'a [ListRow],
+    messages: &'a [MessageMeta],
+    selected: &'a [MsgKey],
+    anchor: Option<usize>,
     role: FolderRole,
-    messages: &[MessageMeta],
-    focused: Option<&MsgKey>,
-    selected: bool,
-    out: &mut Vec<(String, serde_json::Value)>,
-) {
-    let key = m.key.to_string();
-    if resp.secondary_clicked() && !selected {
-        out.push(("view.select".into(), json!({"key": key})));
-        return;
+}
+
+impl RowCtx<'_> {
+    /// 一行里的邮件键，最旧的在前（引擎聚焦传入的最后一个，所以最新的放最后）。
+    fn keys_of(&self, r: &ListRow) -> Vec<String> {
+        r.members.iter().rev().filter_map(|i| self.messages.get(*i)).map(|m| m.key.to_string()).collect()
     }
-    if resp.double_clicked() {
-        if m.flags.draft || role == FolderRole::Drafts {
-            out.push(("compose.editDraft".into(), json!({"key": key})));
-        }
-        return;
-    }
-    if resp.clicked() {
-        let mods = resp.ctx.input(|i| i.modifiers);
-        if mods.shift
-            && let Some(anchor) = focused
-            && let (Some(a), Some(b)) = (messages.iter().position(|x| x.key == *anchor), messages.iter().position(|x| x.key == m.key))
-        {
-            let (lo, hi) = (a.min(b), a.max(b));
-            let keys: Vec<String> = messages.get(lo..=hi).unwrap_or(&[]).iter().map(|x| x.key.to_string()).collect();
-            // 被点的那封最后传，引擎会聚焦最后一个
-            let mut keys: Vec<String> = keys.into_iter().filter(|k| *k != key).collect();
-            keys.push(key);
-            out.push(("view.select".into(), json!({"keys": keys})));
-        } else if mods.command {
-            out.push(("view.select".into(), json!({"key": key, "extend": true})));
-        } else {
-            out.push(("view.select".into(), json!({"key": key})));
+
+    /// 普通单击的命令：主题组打开整组，单封邮件选中它。
+    fn select_this(&self) -> (String, serde_json::Value) {
+        match &self.row.group {
+            Some(g) => ("view.selectGroup".into(), json!({"group": g})),
+            None => ("view.select".into(), json!({"key": self.keys_of(self.row).pop().unwrap_or_default()})),
         }
     }
 }
 
-/// 邮件行右键菜单：回复、转发、已读/未读、红旗、移动到、删除。
-fn row_menu(app: &MailApp, ui: &mut Ui, m: &MessageMeta, out: &mut Vec<(String, serde_json::Value)>) {
-    let lang = app.lang();
-    let key = m.key.to_string();
-    ui.set_min_width(170.0);
-    for id in ["compose.reply", "compose.replyAll", "compose.forward"] {
-        if ui.button(lang.cmd(id, id)).clicked() {
-            out.push((id.into(), json!({"key": key})));
-        }
+/// 处理一行上的鼠标操作：单击选中（主题组打开整组）、Cmd 追加、Shift 范围选、双击草稿继续编辑、右键先选中。
+fn row_input(resp: &egui::Response, c: &RowCtx, whole: bool, out: &mut Vec<(String, serde_json::Value)>) {
+    if resp.secondary_clicked() && !whole {
+        out.push(c.select_this());
+        return;
     }
-    ui.separator();
-    let seen = m.flags.seen;
+    if resp.double_clicked() {
+        if c.row.group.is_none()
+            && let Some(m) = c.row.members.first().and_then(|i| c.messages.get(*i))
+            && (m.flags.draft || c.role == FolderRole::Drafts)
+        {
+            out.push(("compose.editDraft".into(), json!({"key": m.key.to_string()})));
+        }
+        return;
+    }
+    if !resp.clicked() {
+        return;
+    }
+    let mods = resp.ctx.input(|i| i.modifiers);
+    let mine = c.keys_of(c.row);
+    if mods.shift
+        && let Some(anchor) = c.anchor
+    {
+        let (lo, hi) = (anchor.min(c.index), anchor.max(c.index));
+        // 范围内其他行的邮件在前，被点的这一行最后传，引擎会聚焦最后一个
+        let others = c.rows.get(lo..=hi).unwrap_or(&[]).iter().enumerate().filter(|(i, _)| lo + i != c.index);
+        let mut keys: Vec<String> = others.flat_map(|(_, r)| c.keys_of(r)).collect();
+        keys.extend(mine);
+        out.push(("view.select".into(), json!({"keys": keys})));
+    } else if mods.command {
+        // 引擎按键逐个切换：整行都选中时全部取消，否则只补上没选中的
+        let chosen = |k: &String| c.selected.iter().any(|s| s.to_string() == *k);
+        let keys: Vec<String> = if mine.iter().all(chosen) { mine } else { mine.into_iter().filter(|k| !chosen(k)).collect() };
+        out.push(("view.select".into(), json!({"keys": keys, "extend": true})));
+    } else {
+        out.push(c.select_this());
+    }
+}
+
+/// 邮件行右键菜单：回复、转发（只对单封邮件）、已读/未读、红旗、移动到、删除（主题组作用于整组）。
+fn row_menu(app: &MailApp, ui: &mut Ui, members: &[&MessageMeta], out: &mut Vec<(String, serde_json::Value)>) {
+    let lang = app.lang();
+    ui.set_min_width(170.0);
+    if let [m] = members {
+        let key = m.key.to_string();
+        for id in ["compose.reply", "compose.replyAll", "compose.forward"] {
+            if ui.button(lang.cmd(id, id)).clicked() {
+                out.push((id.into(), json!({"key": key})));
+            }
+        }
+        ui.separator();
+    }
+    let seen = members.iter().all(|m| m.flags.seen);
     if ui.button(if seen { lang.t("Mark as unread") } else { lang.t("Mark as read") }).clicked() {
         out.push(("message.markRead".into(), json!({"read": !seen})));
     }
-    let flagged = m.flags.flagged;
+    let flagged = members.iter().any(|m| m.flags.flagged);
     if ui.button(if flagged { lang.t("Remove flag") } else { lang.t("Flag") }).clicked() {
         out.push(("message.flag".into(), json!({"flagged": !flagged})));
     }
@@ -287,8 +326,59 @@ fn row_menu(app: &MailApp, ui: &mut Ui, m: &MessageMeta, out: &mut Vec<(String, 
     }
 }
 
-/// 画一封邮件的行：未读蓝点、发件人（未读加粗）、时间、主题、附件和红旗图标、预览。
-fn paint_row(ui: &Ui, rect: Rect, m: &MessageMeta, role: FolderRole, selected: bool, hovered: bool, lang: Language, now: i64, t: &Tokens) {
+/// 列表标题右上角的视图菜单：勾选"按主题归类"（存进引擎偏好 `groupBySubject`）。
+fn view_menu(app: &mut MailApp, ui: &mut Ui, btn: Rect) {
+    let t = Tokens::get(ui.ctx());
+    let lang = app.lang();
+    let resp = ui.interact(btn, egui::Id::new("list_view_menu"), Sense::click());
+    app.target("list.viewMenu", btn);
+    if resp.hovered() || resp.context_menu_opened() {
+        ui.painter().rect_filled(btn, 6.0, t.hover);
+    }
+    icons::paint(ui.painter(), Rect::from_center_size(btn.center(), vec2(16.0, 16.0)), Icon::Sort, t.text_dim);
+    let resp = resp.on_hover_text(lang.t("View options"));
+    egui::Popup::menu(&resp).show(|ui| {
+        ui.set_min_width(170.0);
+        let mut on = app.session.prefs.group_by_subject;
+        let r = ui.checkbox(&mut on, lang.t("Group by subject"));
+        app.target("list.viewMenu.groupBySubject", r.rect);
+        if r.changed() {
+            app.defer("app.prefs", json!({"groupBySubject": on}));
+        }
+    });
+}
+
+/// 行上"谁"那一栏的文字：收件箱显示发件人；已发送/草稿显示收件人。
+pub(crate) fn who_of(m: &MessageMeta, role: FolderRole, lang: Language) -> String {
+    if matches!(role, FolderRole::Sent | FolderRole::Drafts) {
+        let names: Vec<&str> = m.to.iter().map(|a| a.display_name()).collect();
+        if names.is_empty() { lang.t("(no recipient)").to_string() } else { lang.f("To: {names}", &[("names", &names.join(", "))]) }
+    } else {
+        m.from.display_name().to_string()
+    }
+}
+
+/// 主题组那一栏的名字：组里不同的名字按新到旧用逗号连起来（重复的只留一个）。
+fn group_who(members: &[&MessageMeta], role: FolderRole, lang: Language) -> String {
+    let mut names: Vec<String> = Vec::new();
+    for m in members {
+        let w = who_of(m, role, lang);
+        if !names.contains(&w) {
+            names.push(w);
+        }
+        // 名字太多时后面的反正显示不下
+        if names.len() >= 8 {
+            break;
+        }
+    }
+    names.join(", ")
+}
+
+/// 画一行：未读蓝点、发件人（未读加粗）、时间、主题、附件和红旗图标、预览。`members` 是这一行的邮件
+/// （最新的在前）：多于一封时是主题组，名字后面画封数角标，未读/红旗/附件看整组，其余显示最新一封的。
+fn paint_row(ui: &Ui, rect: Rect, members: &[&MessageMeta], role: FolderRole, selected: bool, hovered: bool, lang: Language, now: i64, t: &Tokens) {
+    let Some(m) = members.first().copied() else { return };
+    let grouped = members.len() > 1;
     let p = ui.painter();
     if selected {
         p.rect_filled(rect, 0.0, t.selected);
@@ -297,34 +387,37 @@ fn paint_row(ui: &Ui, rect: Rect, m: &MessageMeta, role: FolderRole, selected: b
         p.rect_filled(rect, 0.0, t.group);
     }
     p.line_segment([pos2(rect.left() + 26.0, rect.bottom() - 0.5), pos2(rect.right(), rect.bottom() - 0.5)], Stroke::new(1.0, t.separator));
-    let unread = !m.flags.seen;
+    let unread = members.iter().any(|x| !x.flags.seen);
     if unread {
         p.circle_filled(pos2(rect.left() + 13.0, rect.top() + 19.0), 4.0, t.accent);
     }
     let left = rect.left() + 26.0;
     let right = rect.right() - 14.0;
-    // 第一行：发件人 + 时间（已发送/草稿显示收件人）
-    let who = if matches!(role, FolderRole::Sent | FolderRole::Drafts) {
-        let names: Vec<&str> = m.to.iter().map(|a| a.display_name()).collect();
-        if names.is_empty() { lang.t("(no recipient)").to_string() } else { lang.f("To: {names}", &[("names", &names.join(", "))]) }
-    } else {
-        m.from.display_name().to_string()
-    };
+    // 第一行：发件人 + （组的）封数角标 + 时间（已发送/草稿显示收件人）
+    let who = if grouped { group_who(members, role, lang) } else { who_of(m, role, lang) };
     let time = list_time(lang, m.date, now);
     let tg = p.layout_no_wrap(time, theme::ui_font(12.0), t.text_faint);
     let y1 = rect.top() + 19.0;
     p.galley(pos2(right - tg.size().x, y1 - tg.size().y / 2.0), tg.clone(), t.text_faint);
+    let badge = grouped.then(|| p.layout_no_wrap(members.len().to_string(), theme::ui_font(11.0), t.text_dim));
+    let badge_w = badge.as_ref().map(|g| g.size().x + 12.0 + 6.0).unwrap_or(0.0);
     let name_font = if unread { theme::ui_bold(14.0) } else { theme::ui_font(14.0) };
-    let ng = widgets::elided(p, &who, name_font, t.text, right - tg.size().x - 10.0 - left);
+    let ng = widgets::elided(p, &who, name_font, t.text, right - tg.size().x - 10.0 - left - badge_w);
+    let name_w = ng.size().x;
     p.galley(pos2(left, y1 - ng.size().y / 2.0), ng, t.text);
+    if let Some(bg) = badge {
+        let r = Rect::from_min_size(pos2(left + name_w + 6.0, y1 - 8.0), vec2(bg.size().x + 12.0, 16.0));
+        p.rect(r, 8.0, t.chip, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
+        p.galley(pos2(r.center().x - bg.size().x / 2.0, r.center().y - bg.size().y / 2.0), bg, t.text_dim);
+    }
     // 第二行：主题 + 附件/红旗图标
     let y2 = rect.top() + 39.0;
     let mut icons_w = 0.0;
-    if m.flags.flagged {
+    if members.iter().any(|x| x.flags.flagged) {
         icons::paint(p, Rect::from_center_size(pos2(right - 7.0, y2), vec2(14.0, 14.0)), Icon::Flag, t.flag);
         icons_w += 20.0;
     }
-    if m.has_attachments {
+    if members.iter().any(|x| x.has_attachments) {
         icons::paint(p, Rect::from_center_size(pos2(right - icons_w - 7.0, y2), vec2(14.0, 14.0)), Icon::Paperclip, t.text_dim);
         icons_w += 20.0;
     }

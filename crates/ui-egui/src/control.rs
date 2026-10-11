@@ -12,7 +12,9 @@
 //! - `engine.journal` — 已执行的命令记录
 //! - `ui.inspect` — 界面状态：窗口大小、各区域矩形、范围、搜索词、选中/聚焦邮件、对话框、写信窗口
 //!   （含 `rich` 超文本模式、正文选区 `selection: [start, end]`、待用样式 `pendingStyle`、格式弹窗 `popup`）、
-//!   提示、状态栏、阅读窗格（`reader.mode`：正文按 `html` 还是 `plain` 显示，`reader.hasHtml`）、
+//!   提示、状态栏、阅读窗格（`reader.mode`：正文按 `html` 还是 `plain` 显示，`reader.hasHtml`，
+//!   `reader.view`：`group`（主题组列表）/ `message` / `null`，`reader.groupBack`：返回横条指向的组）、
+//!   按主题归类（`grouping` 开关、`rows` 行数、`group` 打开的组、`groups` 全部主题组）、
 //!   可点击目标（`targets`：名字 → `[x, y, w, h]`）
 //! - `ui.compose.select {id?, start, end?}` — 设置写信正文的选区（字符下标，`end` 省略时为光标）并聚焦正文，
 //!   之后可以点格式工具栏（`compose.<id>.fmt.bold` 等目标）或用 `ui.text` 输入。`id` 省略时取最后一个写信窗口。
@@ -115,6 +117,10 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
         "query": view.query,
         "search": app.search,
         "messages": view.messages.len(),
+        "grouping": app.session.prefs.group_by_subject,
+        "rows": view.rows.len(),
+        "group": view.group,
+        "groups": app.session.groups(),
         "selected": view.selected.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "focused": view.focused.as_ref().map(ToString::to_string),
         "dialog": app.dialog.as_ref().map(|d| json!({"name": d.name, "values": d.values, "error": d.error, "advanced": d.advanced})),
@@ -130,7 +136,13 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
         "toast": app.toast.as_ref().map(|t| t.0.clone()),
         "status": {"busy": st.busy, "text": st.text, "errors": st.errors, "lastSync": st.last_sync},
         "quickReply": app.reader.quick_reply,
-        "reader": json!({"mode": app.reader.shown, "hasHtml": reader_has_html(app)}),
+        "reader": json!({
+            "mode": app.reader.shown,
+            "hasHtml": reader_has_html(app),
+            // 阅读窗格显示的内容：主题组列表、单封邮件、或什么都没有
+            "view": if view.focused.is_some() { Some("message") } else if view.group.is_some() { Some("group") } else { None },
+            "groupBack": view.focused.as_ref().and_then(|k| app.session.group_of(k)),
+        }),
         "targets": targets,
     })
 }

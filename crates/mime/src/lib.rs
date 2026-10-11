@@ -172,16 +172,55 @@ pub fn preview(text: &str, max: usize) -> String {
     words.join(" ").chars().take(max).collect()
 }
 
+/// 回复前缀（大小写不敏感，半角/全角冒号）。
+const REPLY_PREFIXES: &[&str] = &["re:", "re：", "回复:", "回复：", "答复:", "答复："];
+/// 转发前缀（大小写不敏感，半角/全角冒号）。
+const FORWARD_PREFIXES: &[&str] = &["fwd:", "fwd：", "fw:", "fw：", "转发:", "转发："];
+
 /// 回复时的主题：已有 `Re:`/`回复:`（大小写不敏感）就不再加。
 pub fn reply_subject(subject: &str) -> String {
     let s = subject.trim();
-    if has_prefix(s, &["re:", "re：", "回复:", "回复：", "答复:", "答复："]) { s.to_string() } else { format!("Re: {s}") }
+    if has_prefix(s, REPLY_PREFIXES) { s.to_string() } else { format!("Re: {s}") }
 }
 
 /// 转发时的主题：已有 `Fwd:`/`Fw:`/`转发:` 就不再加。
 pub fn forward_subject(subject: &str) -> String {
     let s = subject.trim();
-    if has_prefix(s, &["fwd:", "fwd：", "fw:", "fw：", "转发:", "转发："]) { s.to_string() } else { format!("Fwd: {s}") }
+    if has_prefix(s, FORWARD_PREFIXES) { s.to_string() } else { format!("Fwd: {s}") }
+}
+
+/// 按主题归类用的键：去掉开头（可重复的）回复/转发前缀（`Re:`、`Fwd:`、`回复：`、`Re[2]:`……），
+/// 压缩空白，转小写。空主题返回空串（调用方不归类）。
+pub fn subject_key(subject: &str) -> String {
+    let mut s = subject.trim();
+    // 主题来自不可信邮件：限制剥前缀的次数
+    for _ in 0..64 {
+        match strip_subject_prefix(s) {
+            Some(rest) => s = rest.trim_start(),
+            None => break,
+        }
+    }
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// 去掉一个回复/转发前缀；没有前缀返回 `None`。也认 `Re[2]:`、`RE(3)：` 这种带次数的写法。
+fn strip_subject_prefix(s: &str) -> Option<&str> {
+    if let Some(p) = REPLY_PREFIXES.iter().chain(FORWARD_PREFIXES).find(|p| has_prefix(s, &[p])) {
+        return s.get(p.len()..);
+    }
+    let head = s.get(..3)?;
+    let close = match head.to_ascii_lowercase().as_str() {
+        "re[" => ']',
+        "re(" => ')',
+        _ => return None,
+    };
+    let rest = s.get(3..)?;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    let rest = rest.get(digits..)?.strip_prefix(close)?;
+    if digits == 0 {
+        return None;
+    }
+    rest.strip_prefix(':').or_else(|| rest.strip_prefix('：'))
 }
 
 /// 回复正文的引用块：`\n\n在 2024-03-01 14:05，张三 <z@qq.com> 写道：\n> 原文…`（`zh` 为 false 时用英文

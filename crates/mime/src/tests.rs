@@ -280,6 +280,22 @@ fn subjects() {
     assert_eq!(forward_subject("Re: x"), "Fwd: Re: x");
 }
 
+#[test]
+fn subject_keys_strip_reply_and_forward_prefixes() {
+    assert_eq!(subject_key("Hello  World"), "hello world");
+    assert_eq!(subject_key("Re: Hello World"), "hello world");
+    assert_eq!(subject_key("RE: re: Fwd:  hello   world "), "hello world");
+    assert_eq!(subject_key("FW: Re[2]: Hello World"), "hello world");
+    assert_eq!(subject_key("回复：转发: 周报"), "周报");
+    assert_eq!(subject_key("答复: 回复： 周报"), "周报");
+    assert_eq!(subject_key("Remarks"), "remarks");
+    assert_eq!(subject_key("Re[x]: keep"), "re[x]: keep");
+    assert_eq!(subject_key("Re:"), "");
+    assert_eq!(subject_key("   "), "");
+    // 前缀太多时只剥一部分，不会卡住
+    assert!(subject_key(&"Re: ".repeat(200)).starts_with("re:"));
+}
+
 /// 引用测试用的原邮件视图。
 fn sample_view() -> MessageView {
     MessageView {
