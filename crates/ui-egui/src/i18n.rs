@@ -276,6 +276,7 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Use Chinese reply and forward headers", "回复和转发使用中文引用头"),
     ("Use an http, https or mailto address", "请输入 http、https 或 mailto 地址"),
     ("Use rich text for new messages", "写信默认使用超文本"),
+    ("Verifying…", "正在验证…"),
     ("Version {v}", "版本 {v}"),
     ("Wednesday", "星期三"),
     ("Write", "写信"),

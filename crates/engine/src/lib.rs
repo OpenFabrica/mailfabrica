@@ -218,6 +218,15 @@ pub enum UiRequest {
     OpenCompose(u64),
     /// 关闭写信窗口（发送成功、丢弃）。
     CloseCompose(u64),
+    /// 添加账户验证通过并已保存（账户 id）。添加账户对话框据此关闭。
+    AccountAdded(String),
+    /// 添加账户失败：账户 id、给用户看的原因（含排查提示）、是不是服务器/网络问题
+    /// （是的话界面展开服务器设置）。添加账户对话框还开着就显示在对话框里，否则弹提示框。
+    AccountAddFailed {
+        id: String,
+        message: String,
+        servers: bool,
+    },
     OpenUrl(String),
 }
 

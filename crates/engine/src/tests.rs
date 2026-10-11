@@ -594,6 +594,20 @@ fn key_for(s: &mut Session, subject: &str) -> String {
         .unwrap()
 }
 
+/// 连不上服务器时，添加失败的请求标明是服务器问题（界面据此展开服务器设置）。
+#[test]
+fn account_add_network_failure_points_at_servers() {
+    let fake = FakeConnector::empty("secret");
+    fake.set_offline(true);
+    let (mut s, _dir) = bare(&fake);
+    s.execute("account.add", json!({"email": "me@example.com", "password": "secret"})).unwrap();
+    s.wait_idle(WAIT);
+    assert!(s.accounts().is_empty());
+    let reqs = s.take_ui_requests();
+    assert!(reqs.iter().any(|r| matches!(r, UiRequest::AccountAddFailed { id, servers: true, .. } if id == "me-example-com")), "{reqs:?}");
+    assert!(!reqs.iter().any(|r| matches!(r, UiRequest::Message(_))), "no separate message box: {reqs:?}");
+}
+
 #[test]
 fn account_add_verify_success_and_auth_failure() {
     let fake = FakeConnector::empty("secret");
@@ -605,11 +619,16 @@ fn account_add_verify_success_and_auth_failure() {
     s.wait_idle(WAIT);
     assert!(s.accounts().is_empty());
     assert!(!s.status().errors.is_empty());
-    let msgs: Vec<String> = s.take_ui_requests().into_iter().filter_map(|r| if let UiRequest::Message(m) = r { Some(m) } else { None }).collect();
+    let msgs: Vec<String> = s
+        .take_ui_requests()
+        .into_iter()
+        .filter_map(|r| if let UiRequest::AccountAddFailed { message, servers: false, .. } = r { Some(message) } else { None })
+        .collect();
     assert!(msgs.iter().any(|m| m.contains("授权码")), "{msgs:?}");
     s.execute("account.add", json!({"email": "me@qq.com", "password": "secret", "name": "我", "imapPort": 993, "smtpSecurity": "starttls"})).unwrap();
     s.wait_idle(WAIT);
     assert_eq!(s.accounts().len(), 1);
+    assert!(s.take_ui_requests().contains(&UiRequest::AccountAdded("me-qq-com".into())), "dialog is told to close");
     assert_eq!(s.accounts()[0].smtp.security, core::Security::StartTls);
     assert!(s.status().errors.is_empty());
     assert_eq!(s.view().messages.len(), 1, "all inboxes shows the new account's mail");
@@ -854,7 +873,11 @@ fn texts_follow_the_language_pref() {
     s.execute("account.add", json!({"email": "me@qq.com", "password": "wrong"})).unwrap();
     assert!(s.status().text.starts_with("Verifying"), "{}", s.status().text);
     s.wait_idle(WAIT);
-    let msgs: Vec<String> = s.take_ui_requests().into_iter().filter_map(|r| if let UiRequest::Message(m) = r { Some(m) } else { None }).collect();
+    let msgs: Vec<String> = s
+        .take_ui_requests()
+        .into_iter()
+        .filter_map(|r| if let UiRequest::AccountAddFailed { message, servers: false, .. } = r { Some(message) } else { None })
+        .collect();
     assert!(msgs.iter().any(|m| m.contains("authorization code")), "{msgs:?}");
     s.execute("account.add", json!({"email": "me@qq.com", "password": "secret"})).unwrap();
     s.wait_idle(WAIT);

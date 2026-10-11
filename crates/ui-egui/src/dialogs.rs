@@ -28,6 +28,10 @@ pub struct Dialog {
     servers_touched: bool,
     /// 上次自动探测服务器用的邮箱域名。
     detected_for: String,
+    /// 添加账户：正在后台验证的账户 id。验证期间对话框不关、输入框锁住，结果回来再决定关闭还是显示错误。
+    pub verifying: Option<String>,
+    /// 下一帧把焦点放到密码框（密码/授权码错了，方便直接改）。
+    pub focus_password: bool,
 }
 
 /// 加密方式选项：(值, 显示名键)。
@@ -48,6 +52,8 @@ impl Dialog {
             advanced: false,
             servers_touched: false,
             detected_for: String::new(),
+            verifying: None,
+            focus_password: false,
         };
         match name {
             "accountAdd" => {
@@ -145,6 +151,8 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
     let Some(d) = app.dialog.clone() else { return Err("no dialog is open".into()) };
     let lang = app.lang();
     let r = match d.name.as_str() {
+        // 正在验证上一次的提交：不重复提交
+        "accountAdd" if d.verifying.is_some() => return Err("the account is being verified".into()),
         "accountAdd" => {
             let email = d.s("email").trim().to_string();
             if !email.contains('@') {
@@ -160,6 +168,15 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
                 }
                 server_params(&d, &mut p);
                 let r = app.run("account.add", Json::Object(p));
+                // 要先登录验证：对话框留着等结果（见 `account_add_result`），成功才关，失败把原因显示在对话框里
+                if let Ok(v) = &r
+                    && v.get("pending").and_then(Json::as_bool) == Some(true)
+                    && let Some(d) = app.dialog.as_mut()
+                {
+                    d.verifying = v.get("id").and_then(Json::as_str).map(str::to_string);
+                    d.error = None;
+                    return r;
+                }
                 if r.is_ok() {
                     app.toast = Some((lang.f("Account {email} added", &[("email", &email)]), crate::now_ms()));
                 }
@@ -220,6 +237,46 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
     r
 }
 
+/// 添加账户的验证结果回来了：添加账户对话框正在等这个账户就在对话框里处理（成功关闭，失败显示原因、
+/// 保留已填的内容），否则（对话框已关）失败时弹提示框。
+pub fn account_add_result(app: &mut MailApp, id: &str, failure: Option<(String, bool)>) {
+    let waiting = app.dialog.as_ref().is_some_and(|d| d.name == "accountAdd" && d.verifying.as_deref() == Some(id));
+    match (waiting, failure) {
+        (true, None) => app.dialog = None,
+        (true, Some((message, servers))) => {
+            if let Some(d) = app.dialog.as_mut() {
+                d.verifying = None;
+                d.error = Some(message);
+                // 连不上服务器：展开服务器设置让用户检查；否则多半是密码/授权码不对，焦点放回密码框
+                if servers {
+                    d.advanced = true;
+                } else {
+                    d.focus_password = true;
+                }
+            }
+        }
+        (false, Some((message, _))) => app.message = Some(message),
+        (false, None) => {}
+    }
+}
+
+/// 对话框里的错误提示：浅红底圆角框，左边警告图标，文字自动换行。
+fn error_box(ui: &mut Ui, text: &str, t: &Tokens) {
+    egui::Frame::NONE
+        .fill(t.danger.gamma_multiply(0.08))
+        .stroke(egui::Stroke::new(1.0, t.danger.gamma_multiply(0.35)))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_top(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 18.0), Sense::hover());
+                icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(15.0, 15.0)), Icon::Warning, t.danger);
+                ui.add(egui::Label::new(egui::RichText::new(text).color(t.danger)).wrap());
+            });
+        });
+}
+
 /// 画打开的对话框。
 pub fn show(app: &mut MailApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
@@ -241,19 +298,19 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                 ui.add_space(12.0);
             }
             match d.name.as_str() {
-                "accountAdd" => account_add(app, ui, &mut d),
+                // 验证期间锁住输入，免得改了的内容和正在验证的不一致
+                "accountAdd" => {
+                    let locked = d.verifying.is_some();
+                    ui.add_enabled_ui(!locked, |ui| account_add(app, ui, &mut d));
+                }
                 "accountEdit" => account_edit(app, ui, &mut d, &mut close),
                 "settings" => settings(ui, &mut d, lang),
                 "contacts" => contacts(app, ui, &mut d, &mut close),
                 _ => about(ui, lang, &t),
             }
             if let Some(e) = &d.error {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                    icons::paint(ui.painter(), r, Icon::Warning, t.danger);
-                    ui.add(egui::Label::new(egui::RichText::new(e).color(t.danger)).wrap());
-                });
+                ui.add_space(12.0);
+                error_box(ui, e, &t);
             }
             ui.add_space(16.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -262,8 +319,9 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                     "contacts" | "about" => (None, lang.t("Close")),
                     _ => (Some(lang.t("Save")), lang.t("Cancel")),
                 };
+                let verifying = d.verifying.is_some();
                 if let Some(l) = ok_label {
-                    let r = widgets::accent_button(ui, l, !app.session.status().busy || d.name != "accountAdd");
+                    let r = widgets::accent_button(ui, l, !verifying);
                     app.target("dialog.ok", r.rect);
                     if r.clicked() {
                         ok = true;
@@ -274,9 +332,10 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                 if r.clicked() {
                     close = true;
                 }
-                if d.name == "accountAdd" && app.session.status().busy {
+                if verifying {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(lang.t("Verifying…")).size(12.5).color(t.text_dim));
                     ui.add(egui::Spinner::new().size(14.0).color(t.accent));
-                    ui.label(egui::RichText::new(app.session.status().text.clone()).size(12.0).color(t.text_dim));
                 }
             });
         });
@@ -391,6 +450,10 @@ fn account_add(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog) {
         app.target("dialog.email", r.rect);
         let r = text_row(ui, d, "password", lang.t("Password"), true, lang.t("Password or authorization code"));
         app.target("dialog.password", r.rect);
+        if d.focus_password {
+            d.focus_password = false;
+            r.request_focus();
+        }
         text_row(ui, d, "name", lang.t("Display name"), false, lang.t("Shown to recipients"));
     });
     detect(app, d);

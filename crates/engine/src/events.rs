@@ -219,7 +219,9 @@ impl Session {
             }
             (Action::AddAccount { account: acc, .. }, Err(e)) => {
                 self.set_error(&acc.id, e.to_string());
-                self.ui_requests.push(UiRequest::Message(add_account_hint(&self.prefs.language, &acc, &e)));
+                let servers = matches!(e, MailError::Net(_) | MailError::Tls(_) | MailError::Io(_));
+                let message = add_account_hint(&self.prefs.language, &acc, &e);
+                self.ui_requests.push(UiRequest::AccountAddFailed { id: acc.id.clone(), message, servers });
                 false
             }
             (Action::Send { compose, rcpts, answered, draft }, Ok(summary)) => {
@@ -328,7 +330,8 @@ impl Session {
         let email = account.email.clone();
         if let Err(e) = self.store.upsert_account(account) {
             self.set_error(&id, e.to_string());
-            self.ui_requests.push(UiRequest::Message(self.tr("accountSaveFailed", &[&email, &e])));
+            let message = self.tr("accountSaveFailed", &[&email, &e]);
+            self.ui_requests.push(UiRequest::AccountAddFailed { id, message, servers: false });
             return;
         }
         if let Err(e) = self.secrets.set(&id, &password) {
@@ -336,6 +339,7 @@ impl Session {
             return;
         }
         self.status.errors.retain(|(a, _)| a != &id);
+        self.ui_requests.push(UiRequest::AccountAdded(id.clone()));
         self.ui_requests.push(UiRequest::Toast(self.tr("accountAdded", &[&email])));
         self.sync_or_note(&id);
     }

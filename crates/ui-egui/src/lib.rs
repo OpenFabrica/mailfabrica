@@ -338,6 +338,8 @@ impl MailApp {
                 }
                 UiRequest::CloseCompose(id) => self.composer.forget(id),
                 UiRequest::OpenUrl(u) => self.open_url(&u),
+                UiRequest::AccountAdded(id) => dialogs::account_add_result(self, &id, None),
+                UiRequest::AccountAddFailed { id, message, servers } => dialogs::account_add_result(self, &id, Some((message, servers))),
             }
         }
     }
