@@ -1,13 +1,14 @@
-//! 写信窗口：每个 `Session::composes()` 条目一个可缩放的 egui 窗口。发件人、收件人/抄送/密送（联系人
-//! 自动补全）、主题、附件、正文；发送（Cmd+Enter）、存草稿、丢弃（有修改时先确认）。
+//! 写信窗口：每个 `Session::composes()` 条目一个可缩放的 egui 窗口（自己画的轻量标题栏）。发件人、
+//! 收件人/抄送/密送（多个地址显示成可删除的地址块，联系人自动补全）、主题、附件、正文；
+//! 发送（Cmd+Enter）、存草稿、丢弃（有修改时先确认）。
 //!
 //! 输入框编辑本地缓冲，改动后立刻用 `compose.set` 交给引擎；引擎那边的值变了（比如换账户换了签名）
 //! 再同步回缓冲。超文本模式的格式工具栏和正文见 [`crate::rich_editor`]。
 
 use std::collections::{HashMap, HashSet};
 
-use egui::{Rect, Sense, Stroke, Ui, pos2, vec2};
-use mailfabrica_engine::{Compose, ComposeMode};
+use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use mailfabrica_engine::{Address, Compose, ComposeMode};
 use serde_json::json;
 
 use crate::icons::{self, Icon};
@@ -33,12 +34,63 @@ impl Field {
     }
 }
 
+/// 一栏地址（收件人/抄送/密送）的本地状态：已确认的地址块 + 正在输入的文字。
+#[derive(Clone, Debug, Default)]
+struct AddrField {
+    chips: Vec<Address>,
+    input: String,
+    /// 上次看到（或交给）引擎的值。
+    seen: String,
+}
+
+impl AddrField {
+    /// 引擎的值变了（不是我们改的，比如回复时预填）就全部拆成地址块。
+    fn sync(&mut self, engine: &str) {
+        if self.seen != engine {
+            self.chips.clear();
+            self.input.clear();
+            for a in Address::parse_list(engine) {
+                self.push(a);
+            }
+            self.seen = engine.to_string();
+        }
+    }
+
+    /// 交给引擎的值：地址块加上还没确认的输入（发送时引擎会一起解析）。
+    fn value(&self) -> String {
+        let mut parts: Vec<String> = self.chips.iter().map(Address::to_string).collect();
+        if !self.input.trim().is_empty() {
+            parts.push(self.input.trim().to_string());
+        }
+        parts.join(", ")
+    }
+
+    /// 加一个地址块；同一个邮箱（不分大小写）只留一个。
+    fn push(&mut self, a: Address) {
+        if !self.chips.iter().any(|c| c.email.eq_ignore_ascii_case(&a.email)) {
+            self.chips.push(a);
+        }
+    }
+
+    /// 把正在输入的文字全部变成地址块；返回是否有变化。
+    fn commit(&mut self) -> bool {
+        if self.input.trim().is_empty() {
+            return false;
+        }
+        for a in Address::parse_list(&self.input) {
+            self.push(a);
+        }
+        self.input.clear();
+        true
+    }
+}
+
 /// 一个写信窗口的本地编辑状态。
 #[derive(Clone, Debug, Default)]
 struct Edit {
-    to: Field,
-    cc: Field,
-    bcc: Field,
+    to: AddrField,
+    cc: AddrField,
+    bcc: AddrField,
     subject: Field,
     body: Field,
     /// 本窗口各输入框的 id（判断 Cmd+Enter 是不是在这个窗口里按的）。
@@ -134,19 +186,27 @@ fn title(lang: Language, c: &Compose) -> String {
     }
 }
 
-/// 地址栏最后一个（正在输入的）地址片段的起点和内容。
-pub fn last_token(text: &str) -> (usize, &str) {
-    let start =
-        text.rfind([',', ';', '，', '；']).map(|i| i + text.get(i..).and_then(|s| s.chars().next()).map(char::len_utf8).unwrap_or(1)).unwrap_or(0);
-    (start, text.get(start..).unwrap_or("").trim())
-}
-
-/// 用选中的联系人替换正在输入的片段，后面补上 `, ` 方便继续输入。
-pub fn apply_completion(text: &str, contact: &str) -> String {
-    let (start, _) = last_token(text);
-    let prefix = text.get(..start).unwrap_or("");
-    let sep = if prefix.is_empty() { "" } else { " " };
-    format!("{prefix}{sep}{contact}, ")
+/// 把输入拆成"已经打完的地址"和"还在输入的尾巴"：分隔符（逗号、分号，含全角）后面的才算打完。
+/// 引号和尖括号里的分隔符不算，所以 `"Last, First" <a@b.c>` 不会被拆开。
+pub fn split_committed(text: &str) -> (Vec<Address>, String) {
+    let mut done = Vec::new();
+    let mut cur = String::new();
+    let (mut quoted, mut angle) = (false, false);
+    for ch in text.chars() {
+        match ch {
+            '"' => quoted = !quoted,
+            '<' if !quoted => angle = true,
+            '>' if !quoted => angle = false,
+            ',' | ';' | '，' | '；' if !quoted && !angle => {
+                done.extend(Address::parse(&cur));
+                cur.clear();
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(ch);
+    }
+    (done, cur.trim_start().to_string())
 }
 
 /// 画全部写信窗口和确认框。
@@ -195,16 +255,22 @@ fn window(app: &mut MailApp, ctx: &egui::Context, c: &Compose, index: usize) {
         app.composer.focus = None;
     }
     let frame = egui::Frame::window(&ctx.global_style()).fill(t.reader).inner_margin(0);
+    // 不用 egui 自带的标题栏（粗体大字、灰底，和工具栏割裂），自己画一条和工具栏连成一片的
     let resp = egui::Window::new(title(lang, c))
         .id(win_id)
+        .title_bar(false)
         .default_pos(pos)
         .default_size(size)
         .min_size(vec2(480.0, 380.0))
         .resizable(true)
         .collapsible(false)
         .frame(frame)
-        .open(&mut open)
-        .show(ctx, |ui| body(app, ui, c, focus_now));
+        .show(ctx, |ui| {
+            if !title_bar(app, ui, &title(lang, c), c.id) {
+                open = false;
+            }
+            body(app, ui, c, focus_now);
+        });
     if let Some(r) = resp {
         app.target(format!("compose.{}", c.id), r.response.rect);
     }
@@ -215,6 +281,24 @@ fn window(app: &mut MailApp, ctx: &egui::Context, c: &Compose, index: usize) {
             app.defer("compose.discard", json!({"id": c.id}));
         }
     }
+}
+
+/// 写信窗口的标题栏：和工具栏同色，标题居中（小号、过长省略），右边关闭按钮。
+/// 标题栏只感知悬停，拖它就是拖窗口。点了关闭返回 false。
+fn title_bar(app: &mut MailApp, ui: &mut Ui, text: &str, id: u64) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+    // 只圆上面两个角，和窗口外框的圆角对上
+    let r = ui.visuals().window_corner_radius.nw;
+    ui.painter().rect_filled(rect, egui::CornerRadius { nw: r, ne: r, sw: 0, se: 0 }, t.toolbar);
+    let g = widgets::elided(ui.painter(), text, theme::ui_font(13.0), t.text_dim, (w - 120.0).max(60.0));
+    ui.painter().galley(rect.center() - g.size() / 2.0, g, t.text_dim);
+    let close = Rect::from_center_size(pos2(rect.right() - 20.0, rect.center().y), vec2(24.0, 24.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(close));
+    let resp = widgets::icon_button(&mut child, Icon::Close, app.lang().t("Close"), 24.0, true);
+    app.target(format!("compose.{id}.close"), resp.rect);
+    !resp.clicked()
 }
 
 /// 写信窗口内容。
@@ -425,115 +509,242 @@ fn field_row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, t.separator.gamma_multiply(0.7)));
 }
 
-/// 地址输入框（收件人/抄送/密送），带联系人自动补全：↑/↓ 选择，回车或 Tab 确认，也可以点。
+/// 地址块上的操作。
+enum ChipAct {
+    None,
+    /// 点了 ×：删掉。
+    Remove,
+    /// 双击：拿回输入框重新编辑。
+    Edit,
+}
+
+/// 一个地址块：圆角胶囊，显示名字（没有名字显示邮箱），右边有 ×；无效地址标红。悬停显示完整地址。
+fn chip(ui: &mut Ui, a: &Address, id: egui::Id) -> ChipAct {
+    let t = Tokens::get(ui.ctx());
+    let valid = a.is_valid();
+    let label = if a.name.is_some() { a.display_name() } else { a.email.as_str() };
+    let fg = if valid { t.text } else { t.danger };
+    let g = widgets::elided(ui.painter(), label, theme::ui_font(13.0), fg, 240.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(10.0 + g.size().x + 26.0, 24.0), Sense::click());
+    let bg = if !valid {
+        t.danger.gamma_multiply(0.12)
+    } else if resp.hovered() {
+        t.hover
+    } else {
+        t.chip
+    };
+    let stroke = if valid { t.separator } else { t.danger.gamma_multiply(0.5) };
+    ui.painter().rect(rect, 12.0, bg, Stroke::new(1.0, stroke), StrokeKind::Inside);
+    ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - g.size().y / 2.0), g, fg);
+    // × 后注册，叠在地址块上面，点它不会算成点地址块
+    let x_rect = Rect::from_center_size(pos2(rect.right() - 13.0, rect.center().y), vec2(16.0, 16.0));
+    let x = ui.interact(x_rect, id.with("x"), Sense::click());
+    if x.hovered() {
+        ui.painter().circle_filled(x_rect.center(), 8.0, t.pressed);
+    }
+    icons::paint(ui.painter(), x_rect.shrink(4.0), Icon::Close, if x.hovered() { t.text } else { t.text_faint });
+    if x.clicked() {
+        return ChipAct::Remove;
+    }
+    if resp.on_hover_text(a.to_string()).double_clicked() {
+        return ChipAct::Edit;
+    }
+    ChipAct::None
+}
+
+/// 地址栏（收件人/抄送/密送）：已确认的地址显示成地址块，后面跟一个输入框。
+/// 输入逗号/分号或回车确认一个地址，输入框失去焦点时也确认；空输入框里按退格删掉最后一个地址块。
+/// 联系人自动补全：↑/↓ 选择，回车或 Tab 确认，也可以点。
 fn address_field(app: &mut MailApp, ui: &mut Ui, id: u64, key: &'static str, fid: egui::Id, autofocus: bool) {
     let t = Tokens::get(ui.ctx());
-    let owner = Some((id, key));
-    let ac_open = app.composer.ac.owner == owner;
+    let ac_open = app.composer.ac.owner == Some((id, key));
     let has_focus = ui.memory(|m| m.has_focus(fid));
-    let mut pick: Option<usize> = None;
-    if ac_open && has_focus {
-        ui.input_mut(|i| {
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                app.composer.ac.index += 1;
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                app.composer.ac.index = app.composer.ac.index.saturating_sub(1);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) || i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
-                pick = Some(app.composer.ac.index);
-            }
-            if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
-                app.composer.ac.owner = None;
-            }
-        });
+    let Some(slot) = addr_slot(app, id, key) else { return };
+    // 先拿出来改，最后放回去：中间还要用 `app` 查联系人、登记目标
+    let mut field = std::mem::take(slot);
+    address_field_inner(app, ui, &mut field, id, key, fid, autofocus, ac_open, has_focus, &t);
+    if let Some(slot) = addr_slot(app, id, key) {
+        *slot = field;
     }
-    let Some(edit) = app.composer.edits.get_mut(&id) else { return };
-    let field = match key {
+}
+
+/// 写信窗口某一栏地址的本地状态。
+fn addr_slot<'a>(app: &'a mut MailApp, id: u64, key: &str) -> Option<&'a mut AddrField> {
+    let edit = app.composer.edits.get_mut(&id)?;
+    Some(match key {
         "to" => &mut edit.to,
         "cc" => &mut edit.cc,
         _ => &mut edit.bcc,
-    };
-    let r =
-        ui.add(egui::TextEdit::singleline(&mut field.buf).id(fid).frame(egui::Frame::NONE).font(theme::ui_font(14.0)).desired_width(f32::INFINITY));
-    if autofocus {
-        r.request_focus();
+    })
+}
+
+/// [`address_field`] 的主体：画地址块和输入框、处理按键和自动补全。
+#[allow(clippy::too_many_arguments)]
+fn address_field_inner(
+    app: &mut MailApp,
+    ui: &mut Ui,
+    field: &mut AddrField,
+    id: u64,
+    key: &'static str,
+    fid: egui::Id,
+    autofocus: bool,
+    ac_open: bool,
+    has_focus: bool,
+    t: &Tokens,
+) {
+    let owner = Some((id, key));
+    let mut changed = false;
+    let mut pick: Option<usize> = None;
+    // 先处理按键，赶在输入框之前消费掉
+    if has_focus {
+        ui.input_mut(|i| {
+            if ac_open {
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    app.composer.ac.index += 1;
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    app.composer.ac.index = app.composer.ac.index.saturating_sub(1);
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) || i.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
+                    pick = Some(app.composer.ac.index);
+                }
+                if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    app.composer.ac.owner = None;
+                }
+            } else if !field.input.trim().is_empty() && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                // 单行输入框按回车会丢焦点；这里吃掉回车，确认地址后继续输入
+                changed |= field.commit();
+            }
+            if field.input.is_empty() && !field.chips.is_empty() && i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace) {
+                field.chips.pop();
+                changed = true;
+            }
+        });
     }
-    let mut changed = r.changed();
-    // 候选联系人：正在输入的片段非空、且还没出现在框里的
-    let (_, token) = last_token(&field.buf);
-    let suggestions: Vec<String> = if token.is_empty() {
-        vec![]
-    } else {
-        let lower = field.buf.to_lowercase();
-        app.session
+    let mut remove = None;
+    let mut reedit = None;
+    let mut over_popup = false;
+    let mut suggestions: Vec<Address> = Vec::new();
+    let inner = ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for (i, a) in field.chips.iter().enumerate() {
+            match chip(ui, a, fid.with(("chip", i))) {
+                ChipAct::Remove => remove = Some(i),
+                ChipAct::Edit => reedit = Some(i),
+                ChipAct::None => {}
+            }
+        }
+        // 这一行剩下的地方太窄就换行，输入框至少留 120 宽
+        if ui.available_size_before_wrap().x < 120.0 {
+            ui.end_row();
+        }
+        let w = ui.available_size_before_wrap().x;
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut field.input)
+                .id(fid)
+                .frame(egui::Frame::NONE)
+                .font(theme::ui_font(14.0))
+                .desired_width(w)
+                .margin(vec2(0.0, 6.0)),
+        );
+        if autofocus {
+            r.request_focus();
+        }
+        if r.changed() {
+            changed = true;
+            // 打了分隔符（或粘贴了一串地址）：分隔符前面的都变成地址块
+            let (done, rest) = split_committed(&field.input);
+            if !done.is_empty() {
+                for a in done {
+                    field.push(a);
+                }
+                field.input = rest;
+                set_cursor(ui.ctx(), fid, field.input.chars().count());
+            }
+        }
+        over_popup = ac_open && app.composer.ac.rect.is_some_and(|pr| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| pr.contains(p))));
+        // 点自动补全弹窗时输入框会先失去焦点，这时不确认，等点的结果
+        if r.lost_focus() && !over_popup {
+            changed |= field.commit();
+        }
+        r
+    });
+    let r = inner.inner;
+    app.target(format!("compose.{id}.{key}"), inner.response.rect);
+    if let Some(i) = remove.filter(|i| *i < field.chips.len()) {
+        field.chips.remove(i);
+        changed = true;
+    } else if let Some(i) = reedit.filter(|i| *i < field.chips.len()) {
+        // 双击地址块：先确认手上正在输入的，再把这个地址放回输入框
+        field.commit();
+        let a = field.chips.remove(i);
+        field.input = a.to_string();
+        set_cursor(ui.ctx(), fid, field.input.chars().count());
+        ui.memory_mut(|m| m.request_focus(fid));
+        changed = true;
+    }
+    // 候选联系人：正在输入的文字非空、且还不在地址块里的
+    let token = field.input.trim();
+    if !token.is_empty() {
+        suggestions = app
+            .session
             .contacts(token)
             .into_iter()
-            .filter(|c| !lower.contains(&format!("<{}>", c.email.to_lowercase())))
+            .filter(|c| !field.chips.iter().any(|a| a.email.eq_ignore_ascii_case(&c.email)))
             .take(6)
-            .map(|c| {
-                if c.name.trim().is_empty() {
-                    c.email.clone()
-                } else {
-                    mailfabrica_engine::Address::named(c.name.clone(), c.email.clone()).to_string()
-                }
-            })
-            .collect()
-    };
+            .map(|c| Address::named(c.name.clone(), c.email.clone()))
+            .collect();
+    }
     let n = suggestions.len();
     if n > 0 {
         app.composer.ac.index = app.composer.ac.index.min(n - 1);
     }
     if let Some(i) = pick.filter(|_| n > 0)
-        && let Some(s) = suggestions.get(i.min(n - 1))
+        && let Some(a) = suggestions.get(i.min(n - 1))
     {
-        field.buf = apply_completion(&field.buf, s);
+        field.input.clear();
+        field.push(a.clone());
         changed = true;
         app.composer.ac.owner = None;
-        set_cursor(ui.ctx(), fid, field.buf.chars().count());
         r.request_focus();
-    } else {
-        // 点弹窗时输入框会先失去焦点，所以指针在弹窗上时也保持弹窗
-        let over_popup = ac_open && app.composer.ac.rect.is_some_and(|pr| ui.input(|i| i.pointer.interact_pos().is_some_and(|p| pr.contains(p))));
-        if n > 0 && (r.has_focus() || over_popup) {
-            if app.composer.ac.owner != owner {
-                app.composer.ac.owner = owner;
-                app.composer.ac.index = 0;
-            }
-            let mut clicked = None;
-            let area = egui::Area::new(fid.with("ac")).order(egui::Order::Foreground).fixed_pos(r.rect.left_bottom() + vec2(-6.0, 4.0)).show(
-                ui.ctx(),
-                |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_min_width(r.rect.width().clamp(240.0, 420.0));
-                        for (i, s) in suggestions.iter().enumerate() {
-                            let sel = i == app.composer.ac.index;
-                            let item = ui
-                                .add(egui::Button::selectable(sel, egui::RichText::new(s).color(t.text)).min_size(vec2(ui.available_width(), 26.0)));
-                            if item.clicked() {
-                                clicked = Some(i);
-                            }
-                        }
-                    });
-                },
-            );
-            app.composer.ac.rect = Some(area.response.rect);
-            if let Some(i) = clicked
-                && let Some(s) = suggestions.get(i)
-            {
-                field.buf = apply_completion(&field.buf, s);
-                changed = true;
-                app.composer.ac.owner = None;
-                set_cursor(ui.ctx(), fid, field.buf.chars().count());
-                ui.memory_mut(|m| m.request_focus(fid));
-            }
-        } else if app.composer.ac.owner == owner {
-            app.composer.ac.owner = None;
+    } else if n > 0 && (r.has_focus() || over_popup) {
+        if app.composer.ac.owner != owner {
+            app.composer.ac.owner = owner;
+            app.composer.ac.index = 0;
         }
+        let mut clicked = None;
+        let area =
+            egui::Area::new(fid.with("ac")).order(egui::Order::Foreground).fixed_pos(r.rect.left_bottom() + vec2(-6.0, 4.0)).show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(r.rect.width().clamp(240.0, 420.0));
+                    for (i, a) in suggestions.iter().enumerate() {
+                        let sel = i == app.composer.ac.index;
+                        let item = ui.add(
+                            egui::Button::selectable(sel, egui::RichText::new(a.to_string()).color(t.text))
+                                .min_size(vec2(ui.available_width(), 26.0)),
+                        );
+                        if item.clicked() {
+                            clicked = Some(i);
+                        }
+                    }
+                });
+            });
+        app.composer.ac.rect = Some(area.response.rect);
+        if let Some(i) = clicked
+            && let Some(a) = suggestions.get(i)
+        {
+            field.input.clear();
+            field.push(a.clone());
+            changed = true;
+            app.composer.ac.owner = None;
+            ui.memory_mut(|m| m.request_focus(fid));
+        }
+    } else if app.composer.ac.owner == owner {
+        app.composer.ac.owner = None;
     }
     if changed {
-        field.seen = field.buf.clone();
-        let value = field.buf.clone();
+        let value = field.value();
+        field.seen = value.clone();
         app.defer("compose.set", json!({"id": id, key: value}));
     }
 }
@@ -552,56 +763,64 @@ fn confirm_dialog(app: &mut MailApp, ctx: &egui::Context) {
     let lang = app.lang();
     let t = Tokens::get(ctx);
     let mut done = false;
-    egui::Modal::new(egui::Id::new("compose_confirm")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 17.0, t.accent);
-            icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), Icon::Drafts, t.on_accent);
-            ui.vertical(|ui| {
-                let (title, text) = match kind {
-                    Confirm::Close => (lang.t("Save this message as a draft?"), lang.t("If you don't save, your changes will be lost.")),
-                    Confirm::Discard => (lang.t("Discard this message?"), lang.t("Your changes will be lost.")),
-                    Confirm::Plain => (lang.t("Switch to plain text?"), lang.t("Formatting such as bold, colors, lists and links will be removed.")),
-                };
-                ui.label(egui::RichText::new(title).font(theme::ui_bold(14.0)));
-                ui.label(egui::RichText::new(text).color(t.text_dim));
+    // 和其他对话框同一套外框：20 内边距、12 圆角
+    egui::Modal::new(egui::Id::new("compose_confirm")).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(20).corner_radius(12)).show(
+        ctx,
+        |ui| {
+            ui.set_width(400.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 17.0, t.accent);
+                icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(18.0, 18.0)), Icon::Drafts, t.on_accent);
+                ui.vertical(|ui| {
+                    let (title, text) = match kind {
+                        Confirm::Close => (lang.t("Save this message as a draft?"), lang.t("If you don't save, your changes will be lost.")),
+                        Confirm::Discard => (lang.t("Discard this message?"), lang.t("Your changes will be lost.")),
+                        Confirm::Plain => {
+                            (lang.t("Switch to plain text?"), lang.t("Formatting such as bold, colors, lists and links will be removed."))
+                        }
+                    };
+                    ui.label(egui::RichText::new(title).font(theme::ui_bold(15.0)));
+                    ui.add_space(2.0);
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(t.text_dim)).wrap());
+                });
             });
-        });
-        ui.add_space(12.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            match kind {
-                Confirm::Close => {
-                    if widgets::accent_button(ui, lang.t("Save Draft"), true).clicked() {
-                        app.defer("compose.saveDraft", json!({"id": id}));
-                        app.defer("compose.discard", json!({"id": id}));
-                        done = true;
+            ui.add_space(18.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                match kind {
+                    Confirm::Close => {
+                        if widgets::accent_button(ui, lang.t("Save Draft"), true).clicked() {
+                            app.defer("compose.saveDraft", json!({"id": id}));
+                            app.defer("compose.discard", json!({"id": id}));
+                            done = true;
+                        }
+                        if ui.add(egui::Button::new(lang.t("Don't Save")).min_size(vec2(72.0, 30.0))).clicked() {
+                            app.defer("compose.discard", json!({"id": id}));
+                            done = true;
+                        }
                     }
-                    if ui.button(lang.t("Don't Save")).clicked() {
-                        app.defer("compose.discard", json!({"id": id}));
-                        done = true;
+                    Confirm::Discard => {
+                        if widgets::accent_button(ui, lang.t("Discard"), true).clicked() {
+                            app.defer("compose.discard", json!({"id": id}));
+                            done = true;
+                        }
+                    }
+                    Confirm::Plain => {
+                        let r = widgets::accent_button(ui, lang.t("Switch"), true);
+                        app.target(format!("compose.{id}.confirmPlain"), r.rect);
+                        if r.clicked() {
+                            app.defer("compose.setFormat", json!({"id": id, "rich": false}));
+                            done = true;
+                        }
                     }
                 }
-                Confirm::Discard => {
-                    if widgets::accent_button(ui, lang.t("Discard"), true).clicked() {
-                        app.defer("compose.discard", json!({"id": id}));
-                        done = true;
-                    }
+                if ui.add(egui::Button::new(lang.t("Cancel")).min_size(vec2(72.0, 30.0))).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    done = true;
                 }
-                Confirm::Plain => {
-                    let r = widgets::accent_button(ui, lang.t("Switch"), true);
-                    app.target(format!("compose.{id}.confirmPlain"), r.rect);
-                    if r.clicked() {
-                        app.defer("compose.setFormat", json!({"id": id, "rich": false}));
-                        done = true;
-                    }
-                }
-            }
-            if ui.button(lang.t("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                done = true;
-            }
-        });
-    });
+            });
+        },
+    );
     if done {
         app.composer.confirm = None;
     }
@@ -612,12 +831,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tokens_and_completion() {
-        assert_eq!(last_token("ali"), (0, "ali"));
-        assert_eq!(last_token("a@b.c, bo").1, "bo");
-        assert_eq!(last_token("a@b.c，张").1, "张");
-        assert_eq!(apply_completion("ali", "Alice <alice@x.com>"), "Alice <alice@x.com>, ");
-        assert_eq!(apply_completion("a@b.c, bo", "Bob <bob@x.com>"), "a@b.c, Bob <bob@x.com>, ");
-        assert_eq!(apply_completion("a@b.c；张", "张三 <z@x.com>"), "a@b.c； 张三 <z@x.com>, ");
+    fn split_and_fields() {
+        let (done, rest) = split_committed("ali");
+        assert!(done.is_empty());
+        assert_eq!(rest, "ali");
+        let (done, rest) = split_committed("a@b.c, bo");
+        assert_eq!(done, vec![Address::new("a@b.c")]);
+        assert_eq!(rest, "bo");
+        let (done, rest) = split_committed("a@b.c；张三 <z@x.com>，");
+        assert_eq!(done.len(), 2);
+        assert_eq!(rest, "");
+        // 引号里的逗号不是分隔符
+        let (done, rest) = split_committed("\"Last, First\" <l@x.com>");
+        assert!(done.is_empty());
+        assert_eq!(rest, "\"Last, First\" <l@x.com>");
+
+        let mut f = AddrField::default();
+        f.sync("CodeHub <n@codehub.example>, a@b.c");
+        assert_eq!(f.chips.len(), 2);
+        assert!(f.input.is_empty());
+        f.input = "A@B.C".into();
+        assert!(f.commit());
+        assert_eq!(f.chips.len(), 2, "重复的邮箱不再加");
+        f.input = "bob".into();
+        assert_eq!(f.value(), "CodeHub <n@codehub.example>, a@b.c, bob");
     }
 }
