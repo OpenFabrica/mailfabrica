@@ -12,7 +12,7 @@ pub mod folder;
 pub mod message;
 pub mod secrets;
 
-pub use account::{AccountConfig, Security, ServerConfig, detect_servers};
+pub use account::{AccountConfig, Security, ServerConfig, detect_servers, server_candidates};
 pub use address::Address;
 pub use error::{MailError, Result};
 pub use folder::{Folder, FolderRole};

@@ -166,7 +166,10 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
                 if !d.s("name").trim().is_empty() {
                     p.insert("name".into(), json!(d.s("name").trim()));
                 }
-                server_params(&d, &mut p);
+                // 服务器栏是按邮箱自动填的：用户没改过就不传，让引擎自己逐个试猜的服务器
+                if d.servers_touched {
+                    server_params(&d, &mut p);
+                }
                 let r = app.run("account.add", Json::Object(p));
                 // 要先登录验证：对话框留着等结果（见 `account_add_result`），成功才关，失败把原因显示在对话框里
                 if let Ok(v) = &r

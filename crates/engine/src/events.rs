@@ -145,6 +145,18 @@ impl Session {
                 }
                 false
             }
+            // 添加账户时自动找到的服务器：改掉还在验证中的账户配置，验证成功时按它保存
+            Event::Servers { account, imap, smtp } => {
+                for (_, action) in self.pending.values_mut() {
+                    if let Action::AddAccount { account: acc, .. } = action
+                        && acc.id == account
+                    {
+                        acc.imap = imap.clone();
+                        acc.smtp = smtp.clone();
+                    }
+                }
+                false
+            }
             Event::Progress { account, progress } => {
                 let text = match progress {
                     Progress::Folder { name, index, count } => self.tr("syncFolder", &[&name, &index, &count]),

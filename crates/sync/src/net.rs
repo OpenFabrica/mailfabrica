@@ -15,6 +15,11 @@ impl Connector for NetConnector {
         imap.login(&login_name(account), password)?;
         Ok(Box::new(NetRemote { imap, selected: None, smtp: account.smtp.clone(), login: login_name(account), password: password.to_string() }))
     }
+
+    /// 连上 SMTP 读到问候就断开。
+    fn probe_smtp(&self, server: &ServerConfig) -> Result<()> {
+        mailfabrica_proto::smtp::probe(server)
+    }
 }
 
 /// 登录名：没填就用邮箱。

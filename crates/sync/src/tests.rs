@@ -117,6 +117,39 @@ fn auth_failure_and_offline() {
     assert!(matches!(dones(&w.wait_idle(WAIT)).as_slice(), [("test", Ok(_))]));
 }
 
+/// 自动找服务器：猜的 imap./smtp. 主机不存在时换 mail.<域名>，并把找到的服务器报回去；
+/// 密码错时不再往下试；全都连不上时报第一个的错误。
+#[test]
+fn detect_falls_back_to_the_next_candidate() {
+    let fake = FakeConnector::empty("pw");
+    fake.set_unreachable(&["imap.example.com", "smtp.example.com"]);
+    let w = Worker::new(Arc::new(fake.clone()));
+    let (imaps, smtps) = mailfabrica_core::server_candidates("me@example.com");
+    let detect = JobKind::Detect { imap: imaps.clone(), smtp: smtps.clone() };
+    w.submit(job(detect.clone()));
+    let evs = w.wait_idle(WAIT);
+    assert!(matches!(dones(&evs).as_slice(), [("detect", Ok(_))]), "{evs:?}");
+    let found = evs.iter().find_map(|e| if let Event::Servers { imap, smtp, .. } = e { Some((imap.host.clone(), smtp.host.clone())) } else { None });
+    assert_eq!(found, Some(("mail.example.com".into(), "mail.example.com".into())));
+    // 第一个就能用：不发 Servers
+    fake.set_unreachable(&[]);
+    let mut acc = job(detect.clone());
+    acc.account.imap = imaps[0].clone();
+    acc.account.smtp = smtps[0].clone();
+    w.submit(acc);
+    let evs = w.wait_idle(WAIT);
+    assert!(!evs.iter().any(|e| matches!(e, Event::Servers { .. })), "{evs:?}");
+    // 密码错：登录被拒就停，不再试别的主机
+    w.submit(Job { account: account(), password: "wrong".into(), kind: detect.clone() });
+    assert!(matches!(dones(&w.wait_idle(WAIT)).as_slice(), [("detect", Err(MailError::Auth(_)))]));
+    // 全都连不上
+    fake.set_offline(true);
+    w.submit(job(detect));
+    assert!(
+        matches!(dones(&w.wait_idle(WAIT)).as_slice(), [("detect", Err(MailError::Net(m)))] if m.contains("also tried mail.example.com:993, example.com:993"))
+    );
+}
+
 #[test]
 fn reconnects_once_after_connection_drop() {
     let fake = FakeConnector::empty("pw");
@@ -136,6 +169,9 @@ fn reconnects_once_after_connection_drop() {
             let fail = *n > 0;
             *n = n.saturating_sub(1);
             Ok(Box::new(FlakyRemote { inner: r, fail }))
+        }
+        fn probe_smtp(&self, server: &ServerConfig) -> Result<()> {
+            self.inner.probe_smtp(server)
         }
     }
     struct FlakyRemote {

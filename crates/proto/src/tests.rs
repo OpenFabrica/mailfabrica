@@ -621,6 +621,14 @@ fn starttls_rejects_injected_plaintext() {
     assert!(matches!(err, Err(MailError::Tls(_) | MailError::Net(_))), "{err:?}");
 }
 
+#[test]
+fn smtp_probe_reads_the_greeting() {
+    assert!(smtp::probe_on(mock("220 mail.example.com ESMTP\r\n")).is_ok());
+    assert!(matches!(smtp::probe_on(mock("554 go away\r\n")), Err(MailError::Server(_))));
+    // 对端一个字节都不发就断开（代理给不存在的主机时就是这样）
+    assert!(smtp::probe_on(mock("")).is_err());
+}
+
 // ---------- SMTP 端到端 ----------
 
 /// SMTP 问候 + EHLO 的脚本前缀。

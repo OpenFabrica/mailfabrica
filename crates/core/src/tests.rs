@@ -36,6 +36,12 @@ fn presets_and_slug() {
     assert_eq!(s.security, Security::StartTls);
     let (i, _) = detect_servers("me@example.org");
     assert_eq!(i.host, "imap.example.org");
+    // 自建邮箱常见只有 mail.<域名>：备选里要有
+    let (imaps, smtps) = server_candidates("mike@talkwork.vip");
+    let hosts = |v: &[ServerConfig]| v.iter().map(|c| c.host.clone()).collect::<Vec<_>>();
+    assert_eq!(hosts(&imaps), ["imap.talkwork.vip", "mail.talkwork.vip", "talkwork.vip"]);
+    assert_eq!(hosts(&smtps), ["smtp.talkwork.vip", "mail.talkwork.vip", "talkwork.vip"]);
+    assert_eq!(server_candidates("me@qq.com").0.len(), 1, "presets are not guessed");
     assert_eq!(AccountConfig::slug_for("Alice@QQ.com"), "alice-qq-com");
 }
 

@@ -51,6 +51,20 @@ pub fn send_on(
     result
 }
 
+/// 只检查 `cfg` 上有没有能用的 SMTP 服务器：连接（含 TLS 握手）、读到 220 问候就 QUIT，不登录不发信。
+/// 添加账户时用它从几个猜的主机里挑出真正存在的那个。
+pub fn probe(cfg: &ServerConfig) -> Result<()> {
+    probe_on(crate::connect(cfg, crate::TIMEOUT)?)
+}
+
+/// 在现成的流上检查 SMTP 问候（测试用）。
+pub fn probe_on(stream: Box<dyn Stream>) -> Result<()> {
+    let mut s = Session { io: BufReader::new(stream) };
+    let (code, text) = s.reply()?;
+    let _ = s.cmd("QUIT");
+    if code == 220 { Ok(()) } else { Err(MailError::Server(format!("{code} {text}"))) }
+}
+
 /// 地址里不能有 CR/LF/尖括号，否则能注入额外的 SMTP 命令。
 fn check_address(addr: &str) -> Result<()> {
     if addr.trim().is_empty() || addr.chars().any(|c| matches!(c, '\r' | '\n' | '<' | '>') || c.is_control()) {

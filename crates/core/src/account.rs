@@ -107,13 +107,26 @@ const PRESETS: &[(&[&str], (&str, u16, Security), (&str, u16, Security))] = &[
     (&["zoho.com"], ("imap.zoho.com", 993, Security::Tls), ("smtp.zoho.com", 465, Security::Tls)),
 ];
 
-/// 按邮箱域名猜 IMAP/SMTP 服务器。未知域名用 `imap.<域名>:993` 和 `smtp.<域名>:465`。
+/// 按邮箱域名猜 IMAP/SMTP 服务器（[`server_candidates`] 的第一个）。未知域名用 `imap.<域名>:993` 和 `smtp.<域名>:465`。
 pub fn detect_servers(email: &str) -> (ServerConfig, ServerConfig) {
+    let (imap, smtp) = server_candidates(email);
+    let first = |v: Vec<ServerConfig>, fallback: ServerConfig| v.into_iter().next().unwrap_or(fallback);
+    (first(imap, ServerConfig::new("", 993, Security::Tls)), first(smtp, ServerConfig::new("", 465, Security::Tls)))
+}
+
+/// 按邮箱域名列出可能的 IMAP/SMTP 服务器，按可能性排序。预设里的域名只有一个；
+/// 未知域名学 Thunderbird 依次猜 `imap.`/`smtp.` 前缀、`mail.` 前缀、域名本身
+/// （很多自建邮箱只有 `mail.<域名>`，没有 `imap.`/`smtp.` 主机）。添加账户时逐个连接，用第一个连得上的。
+pub fn server_candidates(email: &str) -> (Vec<ServerConfig>, Vec<ServerConfig>) {
     let domain = email.rsplit_once('@').map(|(_, d)| d.trim().to_ascii_lowercase()).unwrap_or_default();
     for (domains, imap, smtp) in PRESETS {
         if domains.contains(&domain.as_str()) {
-            return (ServerConfig::new(imap.0, imap.1, imap.2), ServerConfig::new(smtp.0, smtp.1, smtp.2));
+            return (vec![ServerConfig::new(imap.0, imap.1, imap.2)], vec![ServerConfig::new(smtp.0, smtp.1, smtp.2)]);
         }
     }
-    (ServerConfig::new(format!("imap.{domain}"), 993, Security::Tls), ServerConfig::new(format!("smtp.{domain}"), 465, Security::Tls))
+    let hosts = |prefix: &str| [format!("{prefix}.{domain}"), format!("mail.{domain}"), domain.clone()];
+    (
+        hosts("imap").into_iter().map(|h| ServerConfig::new(h, 993, Security::Tls)).collect(),
+        hosts("smtp").into_iter().map(|h| ServerConfig::new(h, 465, Security::Tls)).collect(),
+    )
 }

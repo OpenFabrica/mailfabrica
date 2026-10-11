@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use mailfabrica_core::{AccountConfig, Flag, Flags, Folder, FolderRole, MailError, MessageMeta, MsgKey, Result};
+use mailfabrica_core::{AccountConfig, Flag, Flags, Folder, FolderRole, MailError, MessageMeta, MsgKey, Result, ServerConfig};
 
 pub use fake::FakeConnector;
 pub use net::NetConnector;
@@ -48,6 +48,8 @@ pub trait Remote: Send {
 /// 建立 [`Remote`] 会话的工厂。
 pub trait Connector: Send + Sync {
     fn connect(&self, account: &AccountConfig, password: &str) -> Result<Box<dyn Remote>>;
+    /// 检查 `server` 上有没有能用的 SMTP 服务器（不登录不发信）。
+    fn probe_smtp(&self, server: &ServerConfig) -> Result<()>;
 }
 
 /// 本地对某个文件夹的了解，用来做增量同步。
@@ -62,6 +64,13 @@ pub struct Known {
 pub enum JobKind {
     /// 只登录（添加账户时验证密码）。
     Test,
+    /// 添加账户时自动找服务器：IMAP 按顺序逐个连接登录，SMTP 逐个检查问候，各取第一个能用的。
+    /// 连不上（网络类错误）就换下一个；IMAP 登录被拒说明服务器对了、是密码不对，直接报错不再试。
+    /// 找到的服务器和账户里的不同时发 [`Event::Servers`]。
+    Detect {
+        imap: Vec<ServerConfig>,
+        smtp: Vec<ServerConfig>,
+    },
     /// 同步全部文件夹：列文件夹 → 每个可选文件夹比对 UID → 取新邮件头（每个文件夹最多最新 `limit` 封）
     /// → 刷新已知邮件的标记 → 报告消失的 UID。收件箱先同步。对新邮件里最新的 `prefetch` 封
     /// （且小于 512 KB）顺便取全文（发 `Event::Body`），让列表有预览。
@@ -112,6 +121,7 @@ impl JobKind {
     pub fn name(&self) -> &'static str {
         match self {
             JobKind::Test => "test",
+            JobKind::Detect { .. } => "detect",
             JobKind::Sync { .. } => "sync",
             JobKind::FetchBody { .. } => "fetchBody",
             JobKind::SetFlag { .. } => "setFlag",
@@ -145,6 +155,8 @@ pub enum Event {
     Body { key: MsgKey, raw: Vec<u8> },
     /// 同步进度（结构化，由引擎按界面语言变成文字）。
     Progress { account: String, progress: Progress },
+    /// `JobKind::Detect` 找到的可用服务器（在同一任务的 `Done` 之前发）。
+    Servers { account: String, imap: ServerConfig, smtp: ServerConfig },
     /// 任务结束。`result` 成功时是一句简短摘要（如新邮件数），失败时是错误信息。
     Done { job: JobId, account: String, kind: &'static str, result: std::result::Result<String, MailError> },
 }
@@ -377,6 +389,76 @@ fn with_remote<T>(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job,
     }
 }
 
+/// 自动找服务器最多试几个备选（防止参数里塞太多，每个连不上都可能要等超时）。
+const MAX_CANDIDATES: usize = 5;
+
+/// `JobKind::Detect`：逐个试备选服务器，见那里的说明。备选为空时用账户里配的。
+fn detect(
+    connector: &dyn Connector,
+    conn: &mut Option<Conn>,
+    job: &Job,
+    imaps: &[ServerConfig],
+    smtps: &[ServerConfig],
+    events: &Sender<Event>,
+) -> Result<String> {
+    let mut trial = job.clone();
+    let imaps = if imaps.is_empty() { std::slice::from_ref(&job.account.imap) } else { imaps };
+    let mut first_err = None;
+    let mut imap_ok = None;
+    for cand in imaps.iter().take(MAX_CANDIDATES) {
+        trial.account.imap = cand.clone();
+        // 验证必须真的登录一次，不能用旧连接糊弄过去
+        *conn = None;
+        match with_remote(connector, conn, &trial, |_| Ok(())) {
+            Ok(()) => {
+                imap_ok = Some(cand.clone());
+                break;
+            }
+            Err(e) if transient(&e) => {
+                log::info!("detect {}: imap {}:{} unreachable: {e}", job.account.id, cand.host, cand.port);
+                first_err.get_or_insert(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    // 全都连不上：报第一个（最可能的那个）的错误，并列出另外试过的主机，免得用户以为只试了一个
+    let Some(imap) = imap_ok else {
+        let others: Vec<String> = imaps.iter().take(MAX_CANDIDATES).skip(1).map(|c| format!("{}:{}", c.host, c.port)).collect();
+        return Err(match first_err {
+            Some(e) if !others.is_empty() => MailError::Net(format!("{} (also tried {})", net_detail(&e), others.join(", "))),
+            Some(e) => e,
+            None => MailError::Net("no server to try".into()),
+        });
+    };
+    // SMTP 都连不上时不拦着添加（收信已经验证过了），先用第一个，发信时再报具体错误
+    let smtps = if smtps.is_empty() { std::slice::from_ref(&job.account.smtp) } else { smtps };
+    let smtp = smtps
+        .iter()
+        .take(MAX_CANDIDATES)
+        .find(|c| match connector.probe_smtp(c) {
+            Ok(()) => true,
+            Err(e) => {
+                log::info!("detect {}: smtp {}:{} unusable: {e}", job.account.id, c.host, c.port);
+                false
+            }
+        })
+        .or(smtps.first())
+        .cloned()
+        .unwrap_or_else(|| job.account.smtp.clone());
+    if imap != job.account.imap || smtp != job.account.smtp {
+        let _ = events.send(Event::Servers { account: job.account.id.clone(), imap, smtp });
+    }
+    Ok("ok".into())
+}
+
+/// 网络类错误去掉 `MailError` 的前缀（"network error: " 等），只留原因，方便拼进新的错误信息。
+fn net_detail(e: &MailError) -> String {
+    match e {
+        MailError::Net(m) | MailError::Tls(m) | MailError::Io(m) => m.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// 执行一个任务，返回给 `Done` 的摘要。
 fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events: &Sender<Event>) -> Result<String> {
     let account = job.account.id.as_str();
@@ -386,6 +468,7 @@ fn execute(connector: &dyn Connector, conn: &mut Option<Conn>, job: &Job, events
             *conn = None;
             with_remote(connector, conn, job, |_| Ok("ok".to_string()))
         }
+        JobKind::Detect { imap, smtp } => detect(connector, conn, job, imap, smtp, events),
         JobKind::Sync { known, limit, prefetch } => with_remote(connector, conn, job, |r| sync_all(r, account, known, *limit, *prefetch, events)),
         JobKind::FetchBody { folder, uid } => {
             let raw = with_remote(connector, conn, job, |r| r.fetch_raw(folder, *uid))?;

@@ -1,6 +1,6 @@
 //! `account.*`：添加、修改、删除账户，按邮箱猜服务器。
 
-use mailfabrica_core::{AccountConfig, Security, ServerConfig, detect_servers};
+use mailfabrica_core::{AccountConfig, Security, ServerConfig, detect_servers, server_candidates};
 use mailfabrica_sync::{Job, JobKind};
 use serde_json::{Value as Json, json};
 
@@ -103,7 +103,18 @@ fn add(s: &mut Session, p: &Json) -> Result<Json> {
     }
     if bool_param(p, "verify").unwrap_or(true) {
         s.status.text = s.tr("verifying", &[&email]);
-        s.submit_job(Job { account: account.clone(), password: password.clone(), kind: JobKind::Test }, Action::AddAccount { account, password });
+        // 没指定任何服务器字段：按域名逐个试猜的服务器（自建邮箱常常只有 mail.<域名>）；
+        // 指定了（哪怕只改了端口或加密方式）就尊重用户的设置，只验证这一个
+        let explicit = ["imapHost", "imapPort", "imapSecurity", "smtpHost", "smtpPort", "smtpSecurity"]
+            .iter()
+            .any(|k| p.get(k).is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|v| !v.trim().is_empty())));
+        let kind = if explicit {
+            JobKind::Test
+        } else {
+            let (imap, smtp) = server_candidates(email);
+            JobKind::Detect { imap, smtp }
+        };
+        s.submit_job(Job { account: account.clone(), password: password.clone(), kind }, Action::AddAccount { account, password });
         return Ok(json!({"id": id, "pending": true}));
     }
     s.store.upsert_account(account)?;

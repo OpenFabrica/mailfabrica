@@ -594,6 +594,25 @@ fn key_for(s: &mut Session, subject: &str) -> String {
         .unwrap()
 }
 
+/// 没填服务器、猜的 imap./smtp. 主机不存在时，自动换 mail.<域名> 并按它保存账户；
+/// 用户明确填了服务器就只验证填的那个。
+#[test]
+fn account_add_finds_mail_subdomain() {
+    let fake = FakeConnector::empty("secret");
+    fake.set_unreachable(&["imap.talkwork.vip", "smtp.talkwork.vip"]);
+    let (mut s, _dir) = bare(&fake);
+    s.execute("account.add", json!({"email": "mike@talkwork.vip", "password": "secret"})).unwrap();
+    s.wait_idle(WAIT);
+    let acc = s.accounts().first().cloned().expect("account added");
+    assert_eq!((acc.imap.host.as_str(), acc.smtp.host.as_str()), ("mail.talkwork.vip", "mail.talkwork.vip"));
+    s.execute("account.remove", json!({"id": acc.id})).unwrap();
+    s.take_ui_requests();
+    s.execute("account.add", json!({"email": "mike@talkwork.vip", "password": "secret", "imapHost": "imap.talkwork.vip"})).unwrap();
+    s.wait_idle(WAIT);
+    assert!(s.accounts().is_empty(), "explicit server is not replaced");
+    assert!(s.take_ui_requests().iter().any(|r| matches!(r, UiRequest::AccountAddFailed { servers: true, .. })));
+}
+
 /// 连不上服务器时，添加失败的请求标明是服务器问题（界面据此展开服务器设置）。
 #[test]
 fn account_add_network_failure_points_at_servers() {

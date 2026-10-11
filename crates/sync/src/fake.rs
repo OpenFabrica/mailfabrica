@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use mailfabrica_core::{AccountConfig, Flag, Flags, Folder, FolderRole, MailError, Result};
+use mailfabrica_core::{AccountConfig, Flag, Flags, Folder, FolderRole, MailError, Result, ServerConfig};
 
 use crate::{Connector, Remote, lock};
 
@@ -43,6 +43,8 @@ pub struct FakeState {
     pub outbox: Vec<(String, Vec<String>, Vec<u8>)>,
     /// 为 true 时所有操作返回网络错误（测试断线）。
     pub offline: bool,
+    /// 连不上的主机（测试添加账户时逐个试备选服务器）。
+    pub unreachable: Vec<String>,
 }
 
 impl FakeState {
@@ -68,7 +70,9 @@ impl FakeConnector {
             FakeFolder::new("Trash", &["\\Trash"], 1004),
             FakeFolder::new("Junk", &["\\Junk"], 1005),
         ];
-        FakeConnector { state: Arc::new(Mutex::new(FakeState { password: password.into(), folders, outbox: vec![], offline: false })) }
+        FakeConnector {
+            state: Arc::new(Mutex::new(FakeState { password: password.into(), folders, outbox: vec![], offline: false, unreachable: vec![] })),
+        }
     }
 
     /// 演示用邮箱：中英文混合的若干封邮件（今天、昨天、本周、更早），有已读未读、红旗、附件、
@@ -104,6 +108,11 @@ impl FakeConnector {
         lock(&self.state).offline = offline;
     }
 
+    /// 设置连不上的主机（连接时返回网络错误，像代理给不存在的主机那样）。
+    pub fn set_unreachable(&self, hosts: &[&str]) {
+        lock(&self.state).unreachable = hosts.iter().map(|h| h.to_string()).collect();
+    }
+
     /// 文件夹里的 (uid, 标记) 列表（测试检查服务器状态用）。
     pub fn list(&self, folder: &str) -> Vec<(u32, Flags)> {
         lock(&self.state)
@@ -124,13 +133,22 @@ impl Connector for FakeConnector {
     /// 检查断网和密码，返回共享同一状态的会话。
     fn connect(&self, account: &AccountConfig, password: &str) -> Result<Box<dyn Remote>> {
         let st = lock(&self.state);
-        if st.offline {
+        if st.offline || st.unreachable.contains(&account.imap.host) {
             return Err(MailError::Net(format!("cannot reach {}", account.imap.host)));
         }
         if st.password != password {
             return Err(MailError::Auth("invalid credentials".into()));
         }
         Ok(Box::new(FakeRemote { state: self.state.clone() }))
+    }
+
+    /// 断网或主机在"连不上"名单里时返回网络错误。
+    fn probe_smtp(&self, server: &ServerConfig) -> Result<()> {
+        let st = lock(&self.state);
+        if st.offline || st.unreachable.contains(&server.host) {
+            return Err(MailError::Net(format!("cannot reach {}", server.host)));
+        }
+        Ok(())
     }
 }
 

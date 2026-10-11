@@ -43,9 +43,11 @@ pub(crate) fn connect(cfg: &ServerConfig, timeout: Duration) -> Result<Box<dyn S
     }
 }
 
-/// 用 ring 加密后端和 webpki 根证书构造 rustls 客户端配置。
+/// 用 aws-lc-rs 加密后端和 webpki 根证书构造 rustls 客户端配置。
+/// 密钥交换组优先 X25519MLKEM768（后量子混合），再退到 X25519/P-256/P-384：
+/// 有的服务器只接受 X25519MLKEM768，第一次 ClientHello 不带它的密钥就直接断开，不会要求重试。
 fn client_config() -> Result<Arc<ClientConfig>> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
     let cfg = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()

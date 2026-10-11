@@ -30,7 +30,9 @@ base64 = "0.22"
 tempfile = "3"
 
 # mail
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# aws-lc-rs 后端 + prefer-post-quantum：首次握手就带 X25519MLKEM768 密钥。有的邮件服务器只接受这个组，
+# ring 后端不支持 ML-KEM，握手会被对方直接断开（"unexpected end of file"）
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12", "logging"] }
 webpki-roots = "1"
 mail-parser = "0.11"
 mail-builder = "0.4"
