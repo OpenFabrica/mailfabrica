@@ -25,6 +25,7 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 | `ui.inspect` | | 界面状态：对话框、写信窗口、选中邮件、布局矩形 |
 | `ui.screenshot` | `{path?}` | 窗口 PNG（不给 `path` 时返回 base64） |
 | `ui.click` | `{x, y, button?, count?}` | 在窗口坐标处点击 |
+| `ui.drag` | `{x, y, toX, toY, shift?}` | 按住左键从 (x, y) 拖到 (toX, toY) 再松开（选文字） |
 | `ui.key` | `{key, shift?, cmd?, alt?, ctrl?}` | 键盘按键 |
 | `ui.text` | `{text}` | 输入文字 |
 | `app.quit` | | 退出程序 |

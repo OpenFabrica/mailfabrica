@@ -16,6 +16,7 @@ mailfabrica-rich = { path = "crates/rich" }
 mailfabrica-proto = { path = "crates/proto" }
 mailfabrica-store = { path = "crates/store" }
 mailfabrica-sync = { path = "crates/sync" }
+mailfabrica-html = { path = "crates/html" }
 mailfabrica-engine = { path = "crates/engine" }
 mailfabrica-ui-egui = { path = "crates/ui-egui" }
 mailfabrica-mcp = { path = "crates/mcp" }
@@ -34,6 +35,16 @@ tempfile = "3"
 # ring 后端不支持 ML-KEM，握手会被对方直接断开（"unexpected end of file"）
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "prefer-post-quantum", "std", "tls12", "logging"] }
 webpki-roots = "1"
+
+# HTML 邮件渲染（blitz 还是 beta，钉死版本；anyrender 要和 blitz-paint 用的同一版）
+blitz-dom = { version = "=0.3.0-beta.2", default-features = false, features = ["system-fonts", "svg", "woff", "floats"] }
+blitz-html = "=0.3.0-beta.2"
+blitz-paint = { version = "=0.3.0-beta.2", default-features = false, features = ["svg"] }
+blitz-traits = "=0.3.0-beta.2"
+anyrender = "0.13"
+anyrender_vello_cpu = "0.17"
+# 阻塞式 HTTP（加载邮件里的远程图片）；TLS 用上面同一个 rustls（aws-lc-rs 后端）
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots", "gzip"] }
 mail-parser = "0.11"
 mail-builder = "0.4"
 html2text = "0.15"

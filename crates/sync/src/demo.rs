@@ -57,6 +57,15 @@ impl Demo {
     }
 }
 
+/// 演示用的"星河云"标志：蓝色圆底上一颗白色四角星（原创）。
+const XINGHE_LOGO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="#1a73e8"/><path d="M20 7 L23.5 16.5 L33 20 L23.5 23.5 L20 33 L16.5 23.5 L7 20 L16.5 16.5 Z" fill="#fff"/></svg>"##;
+
+/// SVG 文本 → base64（放进 `data:` 地址）。
+fn base64_svg(svg: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(svg)
+}
+
 /// 造一个带显示名的地址。
 fn who(name: &str, email: &str) -> Address {
     Address::named(name, email)
@@ -107,8 +116,13 @@ pub(crate) fn messages(email: &str) -> Vec<DemoMessage> {
          附件中有 PDF 发票和验真二维码图片。如有疑问请回复本邮件。\n\n星河科技财务部\n",
     );
     inv.attachments = vec![
-        OutAttachment { name: "电子发票_2026100100317.pdf".into(), mime: "application/pdf".into(), data: PDF_TINY.as_bytes().to_vec() },
-        OutAttachment { name: "验真二维码.png".into(), mime: "image/png".into(), data: PNG_1X1.to_vec() },
+        OutAttachment {
+            name: "电子发票_2026100100317.pdf".into(),
+            mime: "application/pdf".into(),
+            data: PDF_TINY.as_bytes().to_vec(),
+            content_id: None,
+        },
+        OutAttachment { name: "验真二维码.png".into(), mime: "image/png".into(), data: PNG_1X1.to_vec(), content_id: None },
     ];
     d.add("INBOX", STARRED, local_ts(10, 9, 30), inv);
 
@@ -188,12 +202,35 @@ pub(crate) fn messages(email: &str) -> Vec<DemoMessage> {
     m.references = vec![id1, id2];
     d.add("INBOX", UNREAD, local_ts(3, 17, 20), m);
 
-    let m = out(
+    let mut m = out(
         who("星河云安全中心", "security@xinghe-cloud.example"),
         &me,
         "账号登录提醒：新设备登录",
         "你的账号刚刚在一台新设备上登录。\n\n- 设备：桌面客户端\n- 地区：上海\n\n如果是你本人操作，可以忽略这封邮件。否则请尽快修改密码。\n",
     );
+    // 典型的通知类 HTML：居中卡片、圆角边框、分割线、圆角按钮、页脚小字，标志是内嵌的 SVG（演示模式不联网）
+    m.html = Some(format!(
+        "<!DOCTYPE html><html><body style=\"margin:0;padding:0\" bgcolor=\"#FFFFFF\">\
+         <table width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\"><tr height=\"32\"><td></td></tr><tr align=\"center\"><td>\
+         <table border=\"0\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:516px;min-width:220px\"><tr><td>\
+         <div style=\"border:thin solid #dadce0;border-radius:8px;padding:40px 20px\" align=\"center\">\
+         <img src=\"data:image/svg+xml;base64,{logo}\" width=\"40\" height=\"40\" alt=\"星河云\" style=\"margin-bottom:16px\">\
+         <div style=\"border-bottom:thin solid #dadce0;color:rgba(0,0,0,0.87);line-height:32px;padding-bottom:24px;text-align:center\">\
+         <div style=\"font-size:24px\">新设备登录了你的账号</div>\
+         <div style=\"font-size:14px;line-height:20px;margin-top:8px\">{email}</div></div>\
+         <div style=\"font-size:14px;color:rgba(0,0,0,0.87);line-height:20px;padding-top:20px;text-align:center\">\
+         你的星河云账号刚刚在一台新设备（桌面客户端，上海）上登录。如果是你本人操作，可以忽略这封邮件；否则请立即检查账号安全。\
+         <div style=\"padding-top:32px;text-align:center\"><a href=\"https://xinghe-cloud.example/security\" \
+         style=\"line-height:16px;color:#ffffff;font-weight:500;text-decoration:none;font-size:14px;display:inline-block;padding:12px 24px;\
+         background-color:#0b57d0;border-radius:9999px;min-width:64px\">查看活动</a></div></div>\
+         <div style=\"padding-top:20px;font-size:12px;line-height:16px;color:#5f6368;text-align:center\">也可以在这里查看安全动态：<br>\
+         <a href=\"https://xinghe-cloud.example/notifications\" style=\"text-decoration:none;color:#4285F4\">https://xinghe-cloud.example/notifications</a></div>\
+         </div><div style=\"color:rgba(0,0,0,0.54);font-size:11px;line-height:18px;padding-top:12px;text-align:center\">\
+         <div>这封邮件用于通知你的账号和服务的重要变化。</div><div>© 2026 星河云</div></div>\
+         </td></tr></table></td></tr><tr height=\"32\"><td></td></tr></table></body></html>",
+        logo = base64_svg(XINGHE_LOGO),
+        email = email,
+    ));
     d.add("INBOX", SEEN, local_ts(2, 13, 10), m);
 
     // 昨天
@@ -441,7 +478,7 @@ mod tests {
             subject: "测试".into(),
             text: "hi".into(),
             html: Some("<p>hi</p>".into()),
-            attachments: vec![OutAttachment { name: "图.png".into(), mime: "image/png".into(), data: PNG_1X1.to_vec() }],
+            attachments: vec![OutAttachment { name: "图.png".into(), mime: "image/png".into(), data: PNG_1X1.to_vec(), content_id: None }],
             in_reply_to: Some("a@b.c".into()),
             references: vec!["a@b.c".into()],
             ..Default::default()

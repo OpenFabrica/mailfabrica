@@ -1,8 +1,8 @@
 //! 右侧阅读窗格：主题、发件人/收件人/抄送/时间、红旗开关、「HTML | 纯文本」切换、附件卡片、正文，
 //! 底部是 Foxmail 式的快速回复框。
 //!
-//! 有 HTML 正文时默认按格式显示：`RichDoc::from_html` 转成富文本，用和写信编辑器相同的排版（[`crate::richview`]）
-//! 画成可选中、可复制的只读文字；链接单击打开。图片不加载（隐私），只显示变暗的 `[图片: alt]` 占位。
+//! 有 HTML 正文时默认按格式显示：用 blitz 排版渲染（[`crate::htmlbody`]），效果接近浏览器，远程图片自动加载。
+//! 渲染器出错时退回旧办法：`RichDoc::from_html` 转成富文本，用和写信编辑器相同的排版（[`crate::richview`]）。
 //! 纯文本模式（或没有 HTML）显示 `MessageView.text`，自动识别网址。
 
 use std::collections::HashSet;
@@ -29,8 +29,10 @@ pub struct ReaderState {
     requested: Option<MsgKey>,
     /// 当前邮件纯文本正文切好的段落（邮件键, 正文, 段落）。持有正文的 `Arc`，正文换了（重新下载）就重切。
     blocks: Option<(MsgKey, Arc<MessageView>, Arc<Vec<Block>>)>,
-    /// 当前邮件 HTML 正文解析好的富文本。
+    /// 当前邮件 HTML 正文解析好的富文本（渲染器出错时的退路）。
     rich: Option<RichBody>,
+    /// 当前邮件 HTML 正文的渲染器。
+    pub(crate) html: Option<crate::htmlbody::HtmlBody>,
     /// 用户切到纯文本显示的邮件（默认有 HTML 就按格式显示）。
     plain: HashSet<MsgKey>,
     /// 本帧正文实际的显示方式（`"html"` / `"plain"`），`ui.inspect` 用；正文还没下载好时为 `None`。
@@ -346,7 +348,7 @@ fn header(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, meta: Option<&MessageMet
                     let (html_r, plain_r) = widgets::segmented(ui, labels, html, "reader_mode");
                     app.target("reader.mode.html", html_r.rect);
                     app.target("reader.mode.plain", plain_r.rect);
-                    let html_r = html_r.on_hover_text(lang.t("Show the formatted message (images are not loaded)"));
+                    let html_r = html_r.on_hover_text(lang.t("Show the formatted message"));
                     let plain_r = plain_r.on_hover_text(lang.t("Show the plain text version"));
                     if html_r.clicked() && !html {
                         app.defer("ui.readerMode", json!({"key": key.to_string(), "mode": "html"}));
@@ -437,7 +439,7 @@ fn attachments(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &MessageView, t:
 fn message_body(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, t: &Tokens) {
     if app.reader.wants_html(key)
         && let Some(html) = v.html.as_deref()
-        && html_body(app, ui, key, v, html, t)
+        && (crate::htmlbody::show(app, ui, key, v, html) || html_body(app, ui, key, v, html, t))
     {
         app.reader.shown = Some("html");
         return;

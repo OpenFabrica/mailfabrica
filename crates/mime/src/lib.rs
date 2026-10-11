@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mail_builder::MessageBuilder;
 use mail_builder::headers::address::Address as BAddress;
 use mail_builder::headers::message_id::MessageId;
+use mail_builder::mime::MimePart;
 use mail_parser::{HeaderValue, Message, MessageParser, MessagePart, MimeHeaders, PartType};
 use mailfabrica_core::{Address, AttachmentInfo, Flags, MailError, MessageMeta, MessageView, MsgKey, OutAttachment, Outgoing, Result};
 
@@ -75,12 +76,12 @@ pub fn attachment(raw: &[u8], index: usize) -> Option<OutAttachment> {
     let msg = parse_message(raw)?;
     let part = msg.attachment(u32::try_from(index).ok()?)?;
     let info = attachment_info(index, part);
-    Some(OutAttachment { name: info.name, mime: info.mime, data: part.contents().to_vec() })
+    Some(OutAttachment { name: info.name, mime: info.mime, data: part.contents().to_vec(), content_id: info.content_id })
 }
 
 /// 组装待发送邮件。返回 (RFC 5322 字节, 生成的 Message-ID（不带尖括号）)。
 /// `date` 是 Unix 秒。Message-ID 用发件人域名生成。有附件时为 multipart/mixed；
-/// 有 html 时正文为 multipart/alternative。中文主题和文件名要正确编码（RFC 2047 / 2231）。
+/// 有 html 时正文为 multipart/alternative；带 `content_id` 的附件和 HTML 一起放进 multipart/related。中文主题和文件名要正确编码（RFC 2047 / 2231）。
 pub fn build(out: &Outgoing, date: i64) -> Result<(Vec<u8>, String)> {
     if !out.from.is_valid() {
         return Err(MailError::Invalid(format!("sender address: {}", out.from.email)));
@@ -106,13 +107,37 @@ pub fn build(out: &Outgoing, date: i64) -> Result<(Vec<u8>, String)> {
     if !refs.is_empty() {
         b = b.references(MessageId::from(refs));
     }
-    b = b.text_body(out.text.as_str());
-    if let Some(html) = out.html.as_deref() {
-        b = b.html_body(html);
-    }
-    for a in &out.attachments {
-        let mime = if a.mime.trim().is_empty() { mime_for_name(&a.name) } else { a.mime.clone() };
-        b = b.attachment(mime, a.name.as_str(), a.data.as_slice());
+    let mime_of = |a: &OutAttachment| if a.mime.trim().is_empty() { mime_for_name(&a.name) } else { a.mime.clone() };
+    let cid_of = |a: &OutAttachment| a.content_id.as_deref().map(clean_id).filter(|c| !c.is_empty());
+    let html = out.html.as_deref();
+    if let Some(html) = html.filter(|_| out.attachments.iter().any(|a| cid_of(a).is_some())) {
+        // 有内嵌图片：mail-builder 的简便接口会把它们和附件一起塞进 multipart/mixed，
+        // 收件端认不出是正文里的图。手动组装 mixed[related[alternative[text, html], 内嵌…], 附件…]
+        let alt = MimePart::new("multipart/alternative", vec![MimePart::new("text/plain", out.text.as_str()), MimePart::new("text/html", html)]);
+        let mut related = vec![alt];
+        let mut mixed = Vec::new();
+        for a in &out.attachments {
+            match cid_of(a) {
+                Some(cid) => related.push(MimePart::new(mime_of(a), a.data.as_slice()).inline().cid(cid)),
+                None => mixed.push(MimePart::new(mime_of(a), a.data.as_slice()).attachment(a.name.as_str())),
+            }
+        }
+        let related = MimePart::new("multipart/related", related);
+        b = b.body(if mixed.is_empty() {
+            related
+        } else {
+            mixed.insert(0, related);
+            MimePart::new("multipart/mixed", mixed)
+        });
+    } else {
+        b = b.text_body(out.text.as_str());
+        if let Some(html) = html {
+            b = b.html_body(html);
+        }
+        // 没有 HTML 时内嵌部分没人引用，按普通附件发
+        for a in &out.attachments {
+            b = b.attachment(mime_of(a), a.name.as_str(), a.data.as_slice());
+        }
     }
     let bytes = b.write_to_vec().map_err(|e| MailError::Io(e.to_string()))?;
     Ok((bytes, message_id))

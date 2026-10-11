@@ -10,6 +10,7 @@ pub mod brands;
 pub mod compose;
 pub mod control;
 pub mod dialogs;
+pub mod htmlbody;
 pub mod i18n;
 pub mod icons;
 pub mod list;

@@ -12,6 +12,7 @@ egui/eframe 界面、一切皆命令、控制通道、MCP、`cargo xtask`。
 | L1 | `proto` | 阻塞式 IMAP4rev1 + SMTP 客户端（rustls，不用异步运行时） |
 | L2 | `store` | 本地存储：每账户一个目录，JSON 索引 + `.eml` 原文 + 联系人 |
 | L3 | `sync` | 后台工作线程（每账户一条），`Connector`/`Remote` 抽象，内存假服务器 `FakeConnector` |
+| L4 | `html` | HTML 邮件渲染：blitz（Stylo + Taffy）排版、vello_cpu 画成图块，专用线程；远程图片用 ureq 下载 |
 | L5 | `engine` | `Session`、命令注册表、视图、写信状态；界面/CLI/MCP 唯一入口 |
 | L6 | `ui-egui`、`mcp` | Foxmail 风格界面 + 控制通道；MCP 服务器 |
 | L7 | `apps/mailfabrica`、`apps/mailfabrica-cli` | 桌面程序；命令行 |

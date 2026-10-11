@@ -8,9 +8,10 @@
 use std::collections::{HashMap, HashSet};
 
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use mailfabrica_engine::{Address, Compose, ComposeMode};
+use mailfabrica_engine::{Address, Compose, ComposeMode, ComposeQuote};
 use serde_json::json;
 
+use crate::htmlbody::HtmlPane;
 use crate::icons::{self, Icon};
 use crate::rich_editor::{self, RichState};
 use crate::theme::{self, Tokens};
@@ -129,6 +130,8 @@ pub struct ComposeUi {
     edits: HashMap<u64, Edit>,
     confirm: Option<(u64, Confirm)>,
     ac: Autocomplete,
+    /// 原文引用的 HTML 显示：窗口 id → (显示的 HTML, 渲染状态)。引用变了（正文到了、删掉了）就重建。
+    quotes: HashMap<u64, (String, HtmlPane)>,
 }
 
 impl ComposeUi {
@@ -136,6 +139,7 @@ impl ComposeUi {
     pub fn forget(&mut self, id: u64) {
         self.edits.remove(&id);
         self.hidden.remove(&id);
+        self.quotes.remove(&id);
         if self.confirm.is_some_and(|(c, _)| c == id) {
             self.confirm = None;
         }
@@ -451,7 +455,16 @@ fn body(app: &mut MailApp, ui: &mut Ui, c: &Compose, focus_now: bool) {
                 edit.rich.restore = Some((0, 0));
             }
             if c.rich {
-                rich_editor::editor(ui, c, fid, &mut edit.body.buf, &mut edit.body.seen, &mut edit.rich, lang, &mut out);
+                match &c.quote {
+                    Some(q) => {
+                        // 有原文引用时正文框不占满（随内容长高），引用紧跟在下面，和 Gmail 一样
+                        ui.allocate_ui(vec2(ui.available_width(), 120.0), |ui| {
+                            rich_editor::editor(ui, c, fid, &mut edit.body.buf, &mut edit.body.seen, &mut edit.rich, lang, &mut out);
+                        });
+                        quote_view(app, ui, id, q);
+                    }
+                    None => rich_editor::editor(ui, c, fid, &mut edit.body.buf, &mut edit.body.seen, &mut edit.rich, lang, &mut out),
+                }
                 return;
             }
             let len = edit.body.buf.chars().count();
@@ -492,6 +505,37 @@ fn body(app: &mut MailApp, ui: &mut Ui, c: &Compose, focus_now: bool) {
     }
     if let Some(e) = app.composer.edits.get_mut(&id) {
         e.ids = new_ids;
+    }
+}
+
+/// 正文下面的原文引用：用和阅读窗格同一个 HTML 引擎显示（只读，效果一致）；右上角可以整段去掉。
+fn quote_view(app: &mut MailApp, ui: &mut Ui, id: u64, q: &ComposeQuote) {
+    let t = Tokens::get(ui.ctx());
+    let lang = app.lang();
+    ui.add_space(8.0);
+    // 固定高度的一行：右对齐布局不会把下面的空间全占掉
+    ui.allocate_ui_with_layout(vec2(ui.available_width(), 22.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let r = widgets::icon_text_button(ui, Icon::Close, lang.t("Remove quoted text"), t.text_dim, 12.0);
+        app.target(format!("compose.{id}.removeQuote"), r.rect);
+        if r.clicked() {
+            app.defer("compose.removeQuote", json!({"id": id}));
+        }
+    });
+    if !app.composer.quotes.get(&id).is_some_and(|(html, _)| *html == q.html) {
+        let inline = q.inline.iter().filter_map(|a| Some((a.content_id.clone()?, a.data.as_ref().clone()))).collect();
+        // 引用是 HTML 片段：外层不要默认的页边距，左边和正文对齐
+        let doc = format!("<!DOCTYPE html><html><body style=\"margin:0\">{}</body></html>", q.html);
+        app.composer.quotes.insert(id, (q.html.clone(), HtmlPane::new(ui.ctx(), &doc, inline)));
+    }
+    let Some((_, pane)) = app.composer.quotes.get_mut(&id) else { return };
+    match pane.show(ui) {
+        Ok(Some(url)) => app.open_url(&url),
+        Ok(None) => {}
+        Err(e) => {
+            // 渲染器出错：退回纯文本引用
+            log::warn!("quote html view failed: {e}");
+            ui.add(egui::Label::new(egui::RichText::new(q.text.trim()).color(t.text_dim)).wrap());
+        }
     }
 }
 

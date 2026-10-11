@@ -403,30 +403,87 @@ fn rich_reply_and_forward_of_html_newsletter() {
     let k = s.view().messages.iter().find(|m| m.subject.starts_with("Fabrica Weekly")).map(|m| m.key.clone()).unwrap();
     s.execute("view.select", json!({"key": k.to_string()})).unwrap();
     s.wait_idle(WAIT);
+    // 回复：原文 HTML 原样放进只读引用（和阅读窗格显示一致），可编辑的正文里没有原文
     let id = s.execute("compose.reply", json!({})).unwrap()["id"].as_u64().unwrap();
     let c = s.compose(id).unwrap();
     assert!(c.rich);
     assert_eq!(c.body, c.doc.text());
-    let head = c.doc.line_of(c.body.find("写道").map(|b| c.body[..b].chars().count()).unwrap());
-    assert_eq!(c.doc.blocks()[head], rich::Block::Paragraph);
-    // 引用头后面全是引用块，HTML 里的加粗保留
-    assert!(c.doc.blocks()[head + 1..].iter().all(|b| *b == rich::Block::Quote), "{:?}", c.doc.blocks());
-    assert!(c.doc.blocks()[head + 1..].len() >= 3);
-    let at = c.body.find("local-first software").map(|b| c.body[..b].chars().count()).unwrap();
-    assert!(c.doc.has(at..at + "local-first software".len(), rich::Toggle::Bold), "{:?}", c.doc.spans());
-    assert!(c.doc.to_plain().contains("> Why local-first software feels faster"), "{}", c.doc.to_plain());
-    // 转发：转发头 + 原文（列表保留为列表）
+    assert!(!c.body.contains("local-first"), "{}", c.body);
+    let q = c.quote.as_ref().expect("html quote");
+    assert!(q.html.contains("写道") && q.html.contains("<blockquote") && q.html.contains("local-first software"), "{}", q.html);
+    assert!(!q.html.to_ascii_lowercase().contains("<body"), "{}", q.html);
+    assert!(q.text.contains("写道") && q.text.contains("> "), "{}", q.text);
+    // 转发：转发头和原文都在引用里，原文不包 blockquote
     let fid = s.execute("compose.forward", json!({})).unwrap()["id"].as_u64().unwrap();
     let f = s.compose(fid).unwrap();
     assert!(f.rich);
-    assert!(f.body.contains("转发的邮件") && f.body.contains("Five habits for a calmer inbox"), "{}", f.body);
-    assert!(f.doc.blocks().contains(&rich::Block::Bullet), "{:?}", f.doc.blocks());
+    let q = f.quote.as_ref().expect("html quote");
+    assert!(q.html.contains("转发的邮件") && q.html.contains("Five habits for a calmer inbox") && !q.html.contains("<blockquote"), "{}", q.html);
+    assert!(q.text.contains("转发的邮件"));
     // 纯文本模式的回复保持原来的 `> ` 引用
     s.prefs.compose_rich = false;
     let pid = s.execute("compose.reply", json!({})).unwrap()["id"].as_u64().unwrap();
     let p = s.compose(pid).unwrap();
-    assert!(!p.rich && p.doc.is_plain());
+    assert!(!p.rich && p.doc.is_plain() && p.quote.is_none());
     assert!(p.body.lines().any(|l| l.starts_with("> ")), "{}", p.body);
+    // 超文本切到纯文本：引用并进正文
+    s.execute("compose.setFormat", json!({"id": id, "rich": false})).unwrap();
+    let c = s.compose(id).unwrap();
+    assert!(c.quote.is_none() && c.body.contains("> ") && c.body.contains("写道"), "{}", c.body);
+    // 去掉引用
+    s.execute("compose.removeQuote", json!({"id": fid})).unwrap();
+    assert!(s.compose(fid).unwrap().quote.is_none());
+}
+
+/// 带 HTML 引用的回复：发出去的 HTML 是正文 + Gmail 式引用，内嵌图片跟着走；存成草稿再打开，引用还是单独一块。
+#[test]
+fn rich_reply_sends_html_quote_and_round_trips_in_drafts() {
+    let (mut s, fake, _dir) = setup();
+    let logo = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let raw = format!(
+        "From: News <news@z.com>\r\nTo: {ME}\r\nSubject: Card\r\nMessage-ID: <card@z.com>\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/related; boundary=\"rel\"\r\n\r\n--rel\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+         <html><head><style>.card{{color:#123456}}</style></head><body><div class=\"card\"><b>Big news</b> inside</div><img src=\"cid:logo@z\"></body></html>\r\n\
+         --rel\r\nContent-Type: image/png\r\nContent-ID: <logo@z>\r\nContent-Transfer-Encoding: base64\r\n\r\n{logo}\r\n--rel--\r\n"
+    );
+    fake.deliver("INBOX", raw.into_bytes());
+    s.execute("mail.sync", json!({})).unwrap();
+    s.wait_idle(WAIT);
+    let k = key_of(&s, "Card");
+    s.execute("view.select", json!({"key": k.to_string()})).unwrap();
+    s.wait_idle(WAIT);
+    let id = s.execute("compose.reply", json!({})).unwrap()["id"].as_u64().unwrap();
+    let q = s.compose(id).unwrap().quote.clone().expect("quote");
+    assert!(q.html.contains(".card{color:#123456}") && q.html.contains("<b>Big news</b>"), "{}", q.html);
+    assert_eq!(q.inline.len(), 1);
+    s.execute("compose.edit", json!({"id": id, "text": "Thanks!"})).unwrap();
+    s.execute("compose.send", json!({"id": id})).unwrap();
+    s.wait_idle(WAIT);
+    let sent = lock_fake(&fake).outbox[0].2.clone();
+    let v = mailfabrica_mime::parse(&sent);
+    let html = v.html.unwrap_or_default();
+    assert!(html.contains("Thanks!") && html.contains("gmail_quote") && html.contains("<b>Big news</b>"), "{html}");
+    assert!(html.find("Thanks!") < html.find("Big news"));
+    assert!(v.text.contains("Thanks!") && v.text.contains("> Big news inside"), "{}", v.text);
+    assert!(v.attachments.iter().any(|a| a.content_id.as_deref() == Some("logo@z") && a.inline), "{:?}", v.attachments);
+    // 草稿：存好再打开，正文是用户写的，原文引用拆成单独一块
+    let id = s.execute("compose.reply", json!({"key": k.to_string()})).unwrap()["id"].as_u64().unwrap();
+    s.execute("compose.edit", json!({"id": id, "text": "Draft text"})).unwrap();
+    s.execute("compose.saveDraft", json!({"id": id})).unwrap();
+    s.wait_idle(WAIT);
+    s.execute("compose.discard", json!({"id": id})).unwrap();
+    s.execute("view.scope", json!({"account": ACC, "folder": "Drafts"})).unwrap();
+    s.execute("mail.sync", json!({})).unwrap();
+    s.wait_idle(WAIT);
+    let dk = key_of(&s, "Re: Card");
+    let eid = s.execute("compose.editDraft", json!({"key": dk.to_string()})).unwrap()["id"].as_u64().unwrap();
+    s.wait_idle(WAIT);
+    let c = s.compose(eid).unwrap();
+    assert!(c.rich);
+    assert_eq!(c.body.trim(), "Draft text");
+    let q = c.quote.as_ref().expect("quote split out of the draft");
+    assert!(q.html.contains("<b>Big news</b>") && q.text.contains("> Big news inside"), "{q:?}");
+    assert_eq!(q.inline.len(), 1);
 }
 
 #[test]

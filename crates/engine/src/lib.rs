@@ -156,6 +156,21 @@ pub struct ComposeAttachment {
     pub size: usize,
     #[serde(skip)]
     pub data: Arc<Vec<u8>>,
+    /// 内嵌图片的 Content-ID（原文引用里的 `cid:` 图片）；普通附件为 None。
+    pub content_id: Option<String>,
+}
+
+/// 超文本回复/转发里的原邮件引用（原邮件有 HTML 时）。界面用 HTML 引擎原样显示（和阅读窗格一致），
+/// 不可编辑；发送时接在用户写的正文后面。
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposeQuote {
+    /// 接在正文后面的 HTML 片段：引用头 + 原文（回复时原文在 blockquote 里）。
+    pub html: String,
+    /// 纯文本形式：text/plain 部分、切到纯文本模式时用。
+    pub text: String,
+    /// 原文用到的内嵌图片（`cid:`），发送时作为 multipart/related 部分带上。
+    pub inline: Vec<ComposeAttachment>,
 }
 
 /// 一个打开的写信窗口。地址栏是用户输入的原始文本，发送时才解析。
@@ -176,6 +191,8 @@ pub struct Compose {
     pub rich: bool,
     /// 超文本正文（纯文本模式下也保持与 `body` 同步，但不带格式）。
     pub doc: mailfabrica_rich::RichDoc,
+    /// 原邮件引用（只读，显示在正文下面），见 [`ComposeQuote`]。
+    pub quote: Option<ComposeQuote>,
     pub attachments: Vec<ComposeAttachment>,
     pub in_reply_to: Option<String>,
     pub references: Vec<String>,
@@ -466,6 +483,17 @@ impl Session {
     /// 正文状态。`Missing` 时界面应调用 `message.open` 触发下载。
     pub fn body(&self, key: &MsgKey) -> BodyState {
         self.bodies.get(key).cloned().unwrap_or(BodyState::Missing)
+    }
+
+    /// 邮件里带 Content-ID 的部分：(Content-ID, 数据)，给 HTML 正文里的 `cid:` 图片用。正文还没下载好时为空。
+    pub fn inline_parts(&self, key: &MsgKey) -> Vec<(String, Vec<u8>)> {
+        let Some(BodyState::Ready(v)) = self.bodies.get(key) else { return vec![] };
+        let ids: Vec<(usize, String)> = v.attachments.iter().filter_map(|a| a.content_id.clone().map(|c| (a.index, c))).collect();
+        if ids.is_empty() {
+            return vec![];
+        }
+        let Some(raw) = self.store.raw(key) else { return vec![] };
+        ids.into_iter().filter_map(|(i, cid)| mailfabrica_mime::attachment(&raw, i).map(|a| (cid, a.data))).collect()
     }
 
     pub fn composes(&self) -> &[Compose] {

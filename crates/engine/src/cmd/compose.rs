@@ -10,7 +10,7 @@ use serde_json::{Value as Json, json};
 
 use super::{CommandSpec, bad, bool_param, cmd, has_account, has_compose, has_focus, key_param, ok, req_str, str_param, u64_param};
 use crate::events::Action;
-use crate::{Awaiting, BodyState, Compose, ComposeAttachment, ComposeMode, EngineError, Result, Scope, Session, UiRequest};
+use crate::{Awaiting, BodyState, Compose, ComposeAttachment, ComposeMode, ComposeQuote, EngineError, Result, Scope, Session, UiRequest};
 
 /// 单个附件的大小上限（大多数邮箱服务商都不收更大的）。
 const MAX_ATTACHMENT: u64 = 50 * 1024 * 1024;
@@ -18,6 +18,8 @@ const MAX_ATTACHMENT: u64 = 50 * 1024 * 1024;
 const MAX_REFERENCES: usize = 20;
 /// 链接地址的长度上限。
 const MAX_LINK: usize = 8 * 1024;
+/// 原文引用最外层 div 上的标记：重新打开草稿时靠它把引用和用户写的正文分开。
+const QUOTE_MARK: &str = "data-mf-quote";
 
 /// 本模块的命令。
 pub(super) fn specs() -> Vec<CommandSpec> {
@@ -64,6 +66,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         cmd!("compose.setHtml", "Set HTML Body", [], None, "{id, html}", has_compose, set_html),
         cmd!("compose.attach", "Attach File…", ["Compose"], None, "{id, path} | {id, name, base64}", has_compose, attach),
         cmd!("compose.removeAttachment", "Remove Attachment", [], None, "{id, index}", has_compose, remove_attachment),
+        cmd!("compose.removeQuote", "Remove Quoted Text", [], None, "{id}", has_compose, remove_quote),
         cmd!("compose.send", "Send", ["Compose"], Some("Cmd+Enter"), "{id}", can_send, send),
         cmd!("compose.saveDraft", "Save Draft", ["Compose"], None, "{id}", has_compose, save_draft),
         cmd!("compose.discard", "Discard", ["Compose"], None, "{id}", has_compose, discard),
@@ -242,7 +245,16 @@ impl Session {
                 {
                     // 引用头和纯文本模式完全一样：取 quote_reply 结果的第一行（它以 "\n\n" 开头）
                     let head = quote.trim_start_matches('\n').split('\n').next().unwrap_or_default();
-                    built = Some(rich_reply(&sig, head, v));
+                    // 原文有 HTML：原样引用（显示和发出去都和阅读窗格一样），正文只留签名；否则原文转成引用块
+                    match (v.html.as_deref(), body) {
+                        (Some(html), Some((_, raw))) => {
+                            let inner = format!("{}<br>", escape_html(head));
+                            let html = quote_html(&inner, html, true);
+                            c.quote = Some(ComposeQuote { inline: inline_parts(v, raw, &html), html, text: quote.clone() });
+                            built = Some(RichDoc::plain(&sig));
+                        }
+                        _ => built = Some(rich_reply(&sig, head, v)),
+                    }
                 }
                 if !msgid.is_empty() {
                     c.in_reply_to = Some(msgid.clone());
@@ -258,9 +270,17 @@ impl Session {
                 let quote = view.map(|v| mailfabrica_mime::quote_forward(v, zh)).unwrap_or_default();
                 c.body = format!("{sig}{quote}");
                 if c.rich
-                    && let Some(v) = view
+                    && let Some((v, raw)) = body
                 {
-                    built = Some(rich_forward(&sig, v, zh));
+                    match v.html.as_deref() {
+                        Some(html) => {
+                            let lines: Vec<String> = forward_header(v, zh).lines().map(escape_html).collect();
+                            let html = quote_html(&format!("{}<br><br>", lines.join("<br>")), html, false);
+                            c.quote = Some(ComposeQuote { inline: inline_parts(v, raw, &html), html, text: quote.clone() });
+                            built = Some(RichDoc::plain(&sig));
+                        }
+                        None => built = Some(rich_forward(&sig, v, zh)),
+                    }
                 }
                 c.attachments = body.map(|(v, raw)| attachments_of(v, raw)).unwrap_or_default();
             }
@@ -270,10 +290,13 @@ impl Session {
                 c.subject = view.map(|v| v.subject.clone()).unwrap_or_else(|| meta.subject.clone());
                 c.body = view.map(|v| v.text.clone()).unwrap_or_default();
                 // 草稿带 HTML 就按超文本继续编辑，否则按纯文本；正文还没到时先沿用默认，到了再定
-                if let Some(v) = view {
+                if let Some((v, raw)) = body {
                     c.rich = v.html.is_some();
                     if let Some(html) = v.html.as_deref() {
-                        built = Some(trim_doc(RichDoc::from_html(html)));
+                        // 我们存的草稿里原文引用是单独一段 HTML：拆出来继续原样显示，不转成可编辑文字
+                        let (own, quote) = split_quote(html);
+                        built = Some(trim_doc(RichDoc::from_html(&own)));
+                        c.quote = quote.map(|q| ComposeQuote { text: draft_quote_text(&v.text, &q), inline: inline_parts(v, raw, &q), html: q });
                     }
                 }
                 c.in_reply_to = view.and_then(|v| v.in_reply_to.clone()).or_else(|| meta.in_reply_to.clone());
@@ -309,10 +332,14 @@ impl Session {
             c.body = filled.body;
             c.doc = filled.doc;
             c.rich = filled.rich;
+            c.quote = filled.quote;
             c.attachments.extend(filled.attachments);
             if c.mode == ComposeMode::Draft {
                 c.subject = filled.subject;
             }
+        } else if c.rich && c.rich == filled.rich && c.mode != ComposeMode::Draft && c.quote.is_none() {
+            // 用户已经开始写了：正文不动，但原文引用是单独的一块，照样补上
+            c.quote = filled.quote;
         }
         c.in_reply_to = filled.in_reply_to;
         c.references = filled.references;
@@ -325,7 +352,13 @@ impl Session {
     fn outgoing(&self, c: &Compose, need_rcpt: bool) -> Result<Outgoing> {
         let account = self.account(&c.account).ok_or_else(|| EngineError::Other(format!("no such account: {}", c.account)))?;
         // 有格式才发 multipart/alternative；没用任何格式的超文本和纯文本一样只发 text/plain
-        let (text, html) = if c.rich && !c.doc.is_plain() { (c.doc.to_plain(), Some(c.doc.to_html_document())) } else { (c.body.clone(), None) };
+        // 带 HTML 原文引用时一定发 HTML（引用本身有格式）
+        let quote = c.quote.as_ref().filter(|_| c.rich);
+        let (text, html) = match quote {
+            Some(q) => (format!("{}{}", c.doc.to_plain(), q.text), Some(with_quote(&c.doc.to_html_document(), &q.html))),
+            None if c.rich && !c.doc.is_plain() => (c.doc.to_plain(), Some(c.doc.to_html_document())),
+            None => (c.body.clone(), None),
+        };
         let out = Outgoing {
             from: account.address(),
             to: parse_field("To", &c.to)?,
@@ -337,7 +370,13 @@ impl Session {
             attachments: c
                 .attachments
                 .iter()
-                .map(|a| OutAttachment { name: a.name.clone(), mime: a.mime.clone(), data: a.data.as_ref().clone() })
+                .chain(quote.map(|q| q.inline.as_slice()).unwrap_or_default())
+                .map(|a| OutAttachment {
+                    name: a.name.clone(),
+                    mime: a.mime.clone(),
+                    data: a.data.as_ref().clone(),
+                    content_id: a.content_id.clone(),
+                })
                 .collect(),
             in_reply_to: c.in_reply_to.clone(),
             references: c.references.clone(),
@@ -360,7 +399,7 @@ fn attachments_of(view: &MessageView, raw: &[u8]) -> Vec<ComposeAttachment> {
         .iter()
         .filter(|a| !a.inline)
         .filter_map(|a| mailfabrica_mime::attachment(raw, a.index))
-        .map(|a| ComposeAttachment { size: a.data.len(), name: a.name, mime: a.mime, data: Arc::new(a.data) })
+        .map(|a| ComposeAttachment { size: a.data.len(), name: a.name, mime: a.mime, data: Arc::new(a.data), content_id: None })
         .collect()
 }
 
@@ -422,6 +461,16 @@ fn rich_reply(sig: &str, head: &str, view: &MessageView) -> RichDoc {
 
 /// 超文本转发正文：签名、转发头（和纯文本模式同样的几行），然后是原文（有 HTML 时保留格式）。
 fn rich_forward(sig: &str, view: &MessageView, zh: bool) -> RichDoc {
+    let mut doc = RichDoc::plain(&format!("{sig}\n\n{}\n\n", forward_header(view, zh)));
+    let content = original_doc(view);
+    if !content.text().is_empty() {
+        append_doc(&mut doc, &content);
+    }
+    doc
+}
+
+/// 转发头那几行（和纯文本模式一样），前后不带空行。
+fn forward_header(view: &MessageView, zh: bool) -> String {
     // 转发头只依赖这几个字段；用不带正文的视图生成，免得把整封原文再拼一遍
     let bare = MessageView {
         from: view.from.clone(),
@@ -431,13 +480,86 @@ fn rich_forward(sig: &str, view: &MessageView, zh: bool) -> RichDoc {
         date: view.date,
         ..MessageView::default()
     };
-    let header = mailfabrica_mime::quote_forward(&bare, zh);
-    let mut doc = RichDoc::plain(&format!("{sig}\n\n{}\n\n", header.trim_matches('\n')));
-    let content = original_doc(view);
-    if !content.text().is_empty() {
-        append_doc(&mut doc, &content);
+    mailfabrica_mime::quote_forward(&bare, zh).trim_matches('\n').to_string()
+}
+
+/// 转义成 HTML 文本。
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// 原文引用的 HTML（和 Gmail 的结构一样，收件人的客户端能认出来折叠）：引用头 `head`（已是 HTML），
+/// 然后是原文。回复时原文放在左边带竖线的 blockquote 里，转发时直接接在转发头后面。
+fn quote_html(head: &str, original: &str, blockquote: bool) -> String {
+    let body = html_fragment(original);
+    let body = if blockquote {
+        format!(
+            "<blockquote class=\"gmail_quote\" style=\"margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex\">{body}</blockquote>"
+        )
+    } else {
+        body
+    };
+    format!("<div class=\"gmail_quote\" {QUOTE_MARK}=\"1\"><div dir=\"ltr\" class=\"gmail_attr\">{head}</div>{body}</div>")
+}
+
+/// 去掉整封 HTML 的 html/head/body 外壳，只留 body 里面的内容；head 里的 `<style>` 搬到前面，排版不丢。
+/// 没有 `<body>` 的片段原样返回。
+fn html_fragment(html: &str) -> String {
+    // ASCII 小写不改变字节长度，在小写副本里找到的下标可以直接切原文
+    let lower = html.to_ascii_lowercase();
+    let Some(start) = lower.find("<body").and_then(|i| lower[i..].find('>').map(|j| i + j + 1)) else { return html.to_string() };
+    let end = lower.rfind("</body").filter(|e| *e >= start).unwrap_or(html.len());
+    let mut styles = String::new();
+    let mut pos = 0;
+    while let Some(i) = lower[pos..start].find("<style").map(|i| pos + i) {
+        let Some(j) = lower[i..].find("</style>").map(|j| i + j + "</style>".len()) else { break };
+        styles.push_str(&html[i..j]);
+        pos = j;
+        if pos >= start {
+            break;
+        }
     }
-    doc
+    format!("{styles}{}", &html[start..end])
+}
+
+/// 把原文引用接到正文 HTML 文档的 `</body>` 前面（中间空一行）。
+fn with_quote(doc_html: &str, quote: &str) -> String {
+    let at = doc_html.to_ascii_lowercase().rfind("</body").unwrap_or(doc_html.len());
+    format!("{}<br>{quote}{}", &doc_html[..at], &doc_html[at..])
+}
+
+/// 草稿 HTML 拆成（用户写的部分, 原文引用）。没有引用标记时整份都是用户写的。
+fn split_quote(html: &str) -> (String, Option<String>) {
+    let lower = html.to_ascii_lowercase();
+    let Some(start) = lower.find(QUOTE_MARK).and_then(|m| lower[..m].rfind("<div")) else { return (html.to_string(), None) };
+    let end = lower.rfind("</body").filter(|e| *e >= start).unwrap_or(html.len());
+    let own = format!("{}{}", &html[..start], &html[end..]);
+    (own, Some(html[start..end].trim_end().to_string()))
+}
+
+/// 草稿里原文引用的纯文本：在草稿的纯文本里找引用头那一行，从那里截到最后；找不到就由引用的 HTML 转出来。
+fn draft_quote_text(text: &str, quote_html: &str) -> String {
+    let from_html = mailfabrica_mime::html_to_text(quote_html);
+    let head = from_html.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+    let text = text.replace("\r\n", "\n");
+    match text.find(head).filter(|_| !head.is_empty()) {
+        Some(at) => format!("\n\n{}\n", text[at..].trim_end()),
+        None => format!("\n\n{}\n", from_html.trim_end()),
+    }
+}
+
+/// 原文 HTML（`html`）里用 `cid:` 引用到的内嵌部分，发送时要带上。
+fn inline_parts(view: &MessageView, raw: &[u8], html: &str) -> Vec<ComposeAttachment> {
+    let lower = html.to_ascii_lowercase();
+    view.attachments
+        .iter()
+        .filter_map(|a| a.content_id.as_ref().map(|cid| (a.index, cid)))
+        .filter(|(_, cid)| lower.contains(&format!("cid:{}", cid.to_ascii_lowercase())))
+        .filter_map(|(i, cid)| {
+            let a = mailfabrica_mime::attachment(raw, i)?;
+            Some(ComposeAttachment { size: a.data.len(), name: a.name, mime: a.mime, data: Arc::new(a.data), content_id: Some(cid.clone()) })
+        })
+        .collect()
 }
 
 impl Compose {
@@ -558,7 +680,7 @@ fn attach(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let mime = str_param(p, "mime").map(str::to_string).unwrap_or_else(|| mailfabrica_mime::mime_for_name(&name));
     let c = s.compose_mut(CMD, id)?;
-    c.attachments.push(ComposeAttachment { size: data.len(), name, mime, data: Arc::new(data) });
+    c.attachments.push(ComposeAttachment { size: data.len(), name, mime, data: Arc::new(data), content_id: None });
     c.dirty = true;
     Ok(json!({"index": c.attachments.len() - 1}))
 }
@@ -734,6 +856,20 @@ fn style_patch(cmd: &str, p: &Json) -> Result<StylePatch> {
     Ok(patch)
 }
 
+/// `compose.removeQuote`：去掉原文引用（引用不可编辑，不想带上就整段删掉）。
+fn remove_quote(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "compose.removeQuote";
+    let id = compose_id(CMD, p)?;
+    let c = s.compose_mut(CMD, id)?;
+    if c.sending {
+        return Err(EngineError::Other("the message is being sent".into()));
+    }
+    if c.quote.take().is_some() {
+        c.dirty = true;
+    }
+    ok()
+}
+
 /// `compose.setFormat`：切换超文本/纯文本。切到纯文本丢掉全部格式；切到超文本保留文字。
 fn set_format(s: &mut Session, p: &Json) -> Result<Json> {
     const CMD: &str = "compose.setFormat";
@@ -746,7 +882,9 @@ fn set_format(s: &mut Session, p: &Json) -> Result<Json> {
     if c.rich != rich {
         // 切到纯文本时用 to_plain：列表、引用变成 `• `、`1. `、`> ` 前缀，回复的原文仍然是引用格式
         if !rich {
-            c.body = c.doc.to_plain();
+            // 原文引用并进正文，用它的纯文本形式（回复是 `> ` 引用）
+            let quote = c.quote.take().map(|q| q.text).unwrap_or_default();
+            c.body = format!("{}{quote}", c.doc.to_plain());
         }
         c.rich = rich;
         c.doc = RichDoc::plain(&c.body);

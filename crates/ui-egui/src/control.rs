@@ -18,6 +18,7 @@
 //!   之后可以点格式工具栏（`compose.<id>.fmt.bold` 等目标）或用 `ui.text` 输入。`id` 省略时取最后一个写信窗口。
 //! - `ui.click {x, y, button?: "left"|"right", count?, cmd?, shift?}` 或 `ui.click {target}` — 真实鼠标点击
 //! - `ui.move {x, y}` — 移动指针
+//! - `ui.drag {x, y, toX, toY, shift?}` — 按住左键从 (x, y) 拖到 (toX, toY) 再松开（选文字）
 //! - `ui.key {key, cmd?, shift?, alt?}` — 按键（`Enter`、`Escape`、`Down`、`F5`、`N`……）
 //! - `ui.text {text}` — 输入文字（发给有焦点的输入框）
 //! - `ui.screenshot {path?}` — 窗口截图 PNG（没给路径时返回 base64）
@@ -186,6 +187,18 @@ fn push_click(app: &mut MailApp, pos: egui::Pos2, button: egui::PointerButton, c
     app.synthetic.push_back(vec![]);
 }
 
+/// 按住左键从 `from` 拖到 `to`（分 8 步移动，每步一帧），再松开。
+fn push_drag(app: &mut MailApp, from: egui::Pos2, to: egui::Pos2, m: egui::Modifiers) {
+    let button = egui::PointerButton::Primary;
+    app.synthetic.push_back(vec![egui::Event::PointerMoved(from)]);
+    app.synthetic.push_back(vec![egui::Event::PointerButton { pos: from, button, pressed: true, modifiers: m }]);
+    for i in 1..=8 {
+        app.synthetic.push_back(vec![egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0))]);
+    }
+    app.synthetic.push_back(vec![egui::Event::PointerButton { pos: to, button, pressed: false, modifiers: m }]);
+    app.synthetic.push_back(vec![]);
+}
+
 /// 处理一条控制请求。
 pub fn handle(app: &mut MailApp, ctx: &egui::Context, method: &str, p: &Json) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Json::as_str);
@@ -289,6 +302,12 @@ pub fn handle(app: &mut MailApp, ctx: &egui::Context, method: &str, p: &Json) ->
             let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
             push_click(app, pos, button, p.get("count").and_then(Json::as_u64).unwrap_or(1) as u32, modifiers(p));
             ok(json!({"x": pos.x, "y": pos.y}))
+        }
+        "ui.drag" => {
+            let from = egui::pos2(f("x"), f("y"));
+            let to = egui::pos2(f("toX"), f("toY"));
+            push_drag(app, from, to, modifiers(p));
+            ok(Json::Null)
         }
         "ui.resize" => {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(f("width").max(640.0), f("height").max(420.0))));

@@ -186,6 +186,8 @@ pub struct OutAttachment {
     pub mime: String,
     #[serde(skip)]
     pub data: Vec<u8>,
+    /// 有值时作为内嵌部分（multipart/related，正文 HTML 用 `cid:` 引用），不显示成附件。
+    pub content_id: Option<String>,
 }
 
 /// 一封待发送（或存草稿）的邮件。

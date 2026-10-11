@@ -178,8 +178,8 @@ fn build_roundtrip() {
         text: "你好，\n\n这是正文。\nSecond line.".into(),
         html: Some("<p>你好，</p><p>这是正文。</p>".into()),
         attachments: vec![
-            OutAttachment { name: "季度报告.pdf".into(), mime: String::new(), data: b"%PDF-1.4 binary\x00\x01\xff".to_vec() },
-            OutAttachment { name: "notes.txt".into(), mime: "text/plain".into(), data: b"plain notes\n".to_vec() },
+            OutAttachment { name: "季度报告.pdf".into(), mime: String::new(), data: b"%PDF-1.4 binary\x00\x01\xff".to_vec(), content_id: None },
+            OutAttachment { name: "notes.txt".into(), mime: "text/plain".into(), data: b"plain notes\n".to_vec(), content_id: None },
         ],
         in_reply_to: Some("<parent@x.org>".into()),
         references: vec!["root@x.org".into(), "<parent@x.org>".into()],
@@ -219,6 +219,33 @@ fn build_roundtrip() {
     assert_ne!(id, id2);
     // 发件人无效时报错而不是生成坏邮件
     assert!(build(&Outgoing::default(), 0).is_err());
+}
+
+/// 带 Content-ID 的部分放进 multipart/related，收件端当内嵌图片；普通附件照旧。
+#[test]
+fn build_inline_images_go_into_related() {
+    let out = Outgoing {
+        from: Address::new("a@x.com"),
+        to: vec![Address::new("b@y.com")],
+        subject: "Logo".into(),
+        text: "see logo".into(),
+        html: Some(r#"<p><img src="cid:logo@x"></p>"#.into()),
+        attachments: vec![
+            OutAttachment { name: "logo.png".into(), mime: "image/png".into(), data: b"PNGDATA".to_vec(), content_id: Some("<logo@x>".into()) },
+            OutAttachment { name: "a.txt".into(), mime: "text/plain".into(), data: b"file".to_vec(), content_id: None },
+        ],
+        ..Default::default()
+    };
+    let (raw, _) = build(&out, 0).expect("build");
+    let s = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+    assert!(s.contains("multipart/mixed") && s.contains("multipart/related") && s.contains("multipart/alternative"), "{s}");
+    let v = parse(&raw);
+    assert!(v.html.as_deref().is_some_and(|h| h.contains("cid:logo@x")));
+    assert_eq!(v.text.trim_end(), "see logo");
+    let logo = v.attachments.iter().find(|a| a.content_id.as_deref() == Some("logo@x")).expect("inline part");
+    assert!(logo.inline);
+    assert_eq!(attachment(&raw, logo.index).map(|a| a.data), Some(b"PNGDATA".to_vec()));
+    assert!(v.attachments.iter().any(|a| a.name == "a.txt" && !a.inline));
 }
 
 #[test]

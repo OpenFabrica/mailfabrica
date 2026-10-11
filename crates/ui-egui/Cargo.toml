@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 mailfabrica-engine = { workspace = true }
+mailfabrica-html = { workspace = true }
 egui = { workspace = true, features = ["default_fonts"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
