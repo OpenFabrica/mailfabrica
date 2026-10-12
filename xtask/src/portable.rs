@@ -88,7 +88,7 @@ pub(crate) fn build() -> Result<(), String> {
     let instructions = if os == "windows" {
         "解压整个目录后运行 mailfabrica.exe。命令行程序为 mailfabrica-cli.exe。\n"
     } else {
-        "解压后运行 ./mailfabrica。命令行程序为 ./mailfabrica-cli。\n需要 glibc 2.35 或更新的 Linux、Vulkan/OpenGL 驱动和 fontconfig；中文字体建议安装 Noto CJK。\n可将程序安装到 ~/.local/bin，将图标安装到 ~/.local/share/icons/hicolor/256x256/apps/mailfabrica.png，将 mailfabrica.desktop 安装到 ~/.local/share/applications。\n"
+        "解压后运行 ./mailfabrica。命令行程序为 ./mailfabrica-cli。\n需要 glibc 2.35 或更新的 Linux、Vulkan/OpenGL 驱动、fontconfig 和 libxkbcommon-x11；中文字体建议安装 Noto CJK。\nUbuntu/Debian 可安装运行依赖：sudo apt install libfontconfig1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers fonts-noto-cjk\n可将程序安装到 ~/.local/bin，将图标安装到 ~/.local/share/icons/hicolor/256x256/apps/mailfabrica.png，将 mailfabrica.desktop 安装到 ~/.local/share/applications。\n"
     };
     fs::write(payload.join("README.txt"),format!("MailFabrica {full_version}\n{instructions}\n此平台通过官方发布页手动下载、解压并替换应用。\nhttps://github.com/OpenFabrica/mailfabrica/releases/latest\n")).map_err(|e| e.to_string())?;
     if os == "linux" {

@@ -10,7 +10,9 @@
 | Windows | amd64、arm64 | `.zip` portable | Windows 2022、Windows 11 Arm 原生 runner |
 | Linux | amd64、arm64 | `.tar.gz` portable | Ubuntu 22.04 的两个原生架构 runner |
 
-Windows 发布包使用静态 CRT，解压后运行 `mailfabrica.exe`，CLI 为 `mailfabrica-cli.exe`。Linux 运行 `./mailfabrica` 或 `./mailfabrica-cli`，要求 glibc 2.35 或更新版本及正常的图形驱动和 fontconfig；中文字体建议 Noto CJK。包内包含许可证、安装说明、共享图标、构建记录；Linux 另带 `.desktop` 文件。
+Windows 发布包使用静态 CRT，解压后运行 `mailfabrica.exe`，CLI 为 `mailfabrica-cli.exe`。Linux 运行 `./mailfabrica` 或 `./mailfabrica-cli`，要求 glibc 2.35 或更新版本及正常的图形驱动、fontconfig 和 libxkbcommon-x11；中文字体建议 Noto CJK。包内包含许可证、安装说明、共享图标、构建记录；Linux 另带 `.desktop` 文件。
+
+Ubuntu/Debian 运行依赖：`sudo apt install libfontconfig1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers fonts-noto-cjk`。X11 键盘库由窗口库动态加载，单独运行 `ldd` 无法发现它缺失，因此发布验收必须实际启动 GUI。
 
 Windows/Linux 更新入口打开官方发布页，由用户选择架构、解压并替换旧版。macOS 的自动下载、SHA-256、Apple 发布者与 Gatekeeper 校验保持独立，不把这套信任规则静默套用到其他系统。
 
