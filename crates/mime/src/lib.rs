@@ -143,11 +143,13 @@ pub fn build(out: &Outgoing, date: i64) -> Result<(Vec<u8>, String)> {
     Ok((bytes, message_id))
 }
 
-/// HTML 转纯文本（阅读窗格显示用），宽度约 100 列，去掉脚本和样式。
+/// HTML 转纯文本（阅读窗格和列表摘要用），宽度约 100 列，去掉脚本、样式和自动生成的表格边框。
 pub fn html_to_text(html: &str) -> String {
     // html2text 处理的是不可信的 HTML；万一库内部 panic，退回到粗糙的去标签，不让整个程序崩掉
-    let rendered =
-        std::panic::catch_unwind(|| html2text::config::plain_no_decorate().allow_width_overflow().string_from_read(html.as_bytes(), TEXT_WIDTH));
+    let rendered = std::panic::catch_unwind(|| {
+        // 邮件常用多层表格做布局；绘制边框会让纯文本充满横线，并耗尽摘要的字符限额。
+        html2text::config::plain_no_decorate().no_table_borders().allow_width_overflow().string_from_read(html.as_bytes(), TEXT_WIDTH)
+    });
     let text = match rendered {
         Ok(Ok(s)) => s,
         _ => strip_tags(html),

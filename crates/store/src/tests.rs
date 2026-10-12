@@ -149,6 +149,37 @@ fn update_meta_and_remove() {
     assert_eq!(counts(&s, "INBOX"), (1, 1));
 }
 
+/// 旧索引中的表格边框摘要应从本地原文恢复，且不覆盖其他字段或缺失原文的摘要。
+#[test]
+fn cached_table_border_previews_are_repaired_on_load() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut s = setup(dir.path());
+    let mut affected = meta(5, 100, "来自头部的主题", false);
+    affected.preview = "─".repeat(160);
+    affected.has_attachments = true;
+    let mut missing = meta(6, 90, "尚无原文", true);
+    missing.preview = "─".repeat(160);
+    let mut normal = meta(7, 80, "正常摘要", false);
+    normal.preview = "已有正确摘要".into();
+    s.apply_messages(ACC, "INBOX", 1, vec![affected.clone(), missing.clone(), normal.clone()], vec![], vec![], false).expect("apply");
+    let folder = dir.path().join(ACC).join(folder_dir_name("INBOX"));
+    let raw = "Subject: 原文主题\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+               <table><tr><td><p>尊敬的用户：</p><p>您的按需资源已欠费。</p></td></tr></table>";
+    // 直接构造旧缓存，避免 put_raw 提前重新生成摘要。
+    fs::write(folder.join("5.eml"), raw).expect("raw");
+    fs::write(folder.join("7.eml"), raw).expect("normal raw");
+    drop(s);
+    let mut s = Store::open(dir.path()).expect("reopen");
+    let repaired = s.meta(&affected.key).expect("meta");
+    affected.preview = "尊敬的用户： 您的按需资源已欠费。".into();
+    assert_eq!(serde_json::to_value(&repaired).unwrap(), serde_json::to_value(&affected).unwrap());
+    assert_eq!(s.meta(&missing.key).unwrap().preview, missing.preview);
+    assert_eq!(s.meta(&normal.key).unwrap().preview, normal.preview);
+    assert_eq!(s.raw(&affected.key).unwrap(), raw.as_bytes());
+    let persisted: FolderIndex = read_json(&folder.join("index.json"));
+    assert_eq!(persisted.messages.iter().find(|m| m.key.uid == 5).unwrap().preview, affected.preview);
+}
+
 #[test]
 fn put_raw_fills_preview_and_attachments() {
     let dir = tempfile::tempdir().expect("tempdir");

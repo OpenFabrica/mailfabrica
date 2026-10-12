@@ -95,6 +95,35 @@ fn html_only_message() {
     assert!(t.contains('a') && t.contains("b & c") && !t.contains("\n\n\n"), "{t:?}");
 }
 
+/// 嵌套布局表格不应在纯文本和摘要中生成装饰边框。
+#[test]
+fn html_layout_tables_do_not_obscure_body_or_preview() {
+    let raw = crlf(
+        "From: a@x.com\nSubject: notice\nContent-Type: text/html; charset=utf-8\n\n\
+         <table width=\"100%\"><tr><td><table><tr><td><table><tr><td>\
+         <p>尊敬的用户：</p><p>您的按需资源已欠费，请及时充值。</p>\
+         </td></tr></table></td></tr></table></td></tr></table>",
+    );
+    let view = parse(&raw);
+    assert!(view.text.starts_with("尊敬的用户："), "{:?}", view.text);
+    assert!(!view.text.contains('─'), "{:?}", view.text);
+    assert!(view.text.contains("您的按需资源已欠费，请及时充值。"));
+    assert_eq!(meta_from_raw(key(), Flags::default(), 0, &raw).preview, "尊敬的用户： 您的按需资源已欠费，请及时充值。");
+}
+
+/// 去掉生成的边框仍应保留数据表内容和原文中的分隔符。
+#[test]
+fn borderless_tables_preserve_cells_and_literal_separators() {
+    let html = "<table><tr><th>资源</th><th>余额</th></tr>\
+                <tr><td>云服务器</td><td>100 元</td></tr>\
+                <tr><td>数据库</td><td>20 元</td></tr></table><p>─── 原文分隔符 ───</p>";
+    let text = html_to_text(html);
+    assert_eq!(preview(&text, 160), "资源 余额 云服务器 100 元 数据库 20 元 ─── 原文分隔符 ───");
+    let plain = "───\r\n正文中的分隔符\r\n---";
+    let raw = format!("Content-Type: text/plain; charset=utf-8\r\n\r\n{plain}");
+    assert_eq!(parse(raw.as_bytes()).text, plain);
+}
+
 /// 带 HTML、cid 内嵌图片和一个 RFC 2231 中文文件名附件的邮件。
 fn rich_message(with_real_attachment: bool) -> Vec<u8> {
     let attach = if with_real_attachment {

@@ -390,17 +390,38 @@ impl Store {
 
     /// 取文件夹索引，首次访问时从磁盘加载并放进缓存。
     fn index(&mut self, account: &str, folder: &str) -> Result<&mut FolderIndex> {
-        let path = self.folder_dir(account, folder)?.join("index.json");
-        let idx = self.indexes.entry((account.to_string(), folder.to_string())).or_insert_with(|| {
-            let mut idx: FolderIndex = read_json(&path);
-            // 键以存放位置为准，防止目录被复制或改名后键对不上
-            for m in &mut idx.messages {
-                m.key.account = account.to_string();
-                m.key.folder = folder.to_string();
+        let dir = self.folder_dir(account, folder)?;
+        let path = dir.join("index.json");
+        let idx = match self.indexes.entry((account.to_string(), folder.to_string())) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut idx: FolderIndex = read_json(&path);
+                // 键以存放位置为准，防止目录被复制或改名后键对不上
+                for m in &mut idx.messages {
+                    m.key.account = account.to_string();
+                    m.key.folder = folder.to_string();
+                }
+                sort_messages(&mut idx.messages);
+                // 旧版 HTML 转换器绘制的边框可能占满摘要。仅修复受影响且已有本地原文的记录，
+                // 避免读取所有邮件或重新下载；原文不可用时保留原摘要，其他元数据保持不变。
+                let mut repaired = false;
+                for m in &mut idx.messages {
+                    if !m.preview.contains('─') {
+                        continue;
+                    }
+                    let Ok(raw) = fs::read(dir.join(format!("{}.eml", m.key.uid))) else { continue };
+                    let preview = mailfabrica_mime::meta_from_raw(m.key.clone(), m.flags, m.size, &raw).preview;
+                    if !preview.is_empty() && m.preview != preview {
+                        m.preview = preview;
+                        repaired = true;
+                    }
+                }
+                if repaired {
+                    write_json(&path, &idx, false)?;
+                }
+                entry.insert(idx)
             }
-            sort_messages(&mut idx.messages);
-            idx
-        });
+        };
         Ok(idx)
     }
 
