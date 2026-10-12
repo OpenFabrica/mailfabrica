@@ -1,4 +1,4 @@
-//! 更新领域状态：显式检查、下载、保存、验证、打开安装器；不替换运行中的应用。
+//! 更新领域状态：显式检查、下载、保存、验证与安装准备，正常退出后交接辅助进程自动替换。
 use crate::{EngineError, Result, Session, UiRequest};
 use mailfabrica_update::{Client, Event, Release, Task, Worker};
 use serde::Serialize;

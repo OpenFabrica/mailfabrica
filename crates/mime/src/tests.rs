@@ -187,7 +187,9 @@ fn build_roundtrip() {
     let (raw, id) = build(&out, 1_709_273_100).expect("build");
     assert!(id.ends_with("@qq.com") && !id.contains('<'), "{id}");
     let head = String::from_utf8_lossy(&raw);
-    assert!(!head.to_ascii_lowercase().contains("bcc"), "Bcc 不能出现在头部");
+    // 随机 Message-ID 或 MIME boundary 可能含 bcc，必须检查字段名，不能搜索整封邮件的子串。
+    let headers = head.split("\r\n\r\n").next().expect("headers");
+    assert!(!headers.lines().any(|line| line.split_once(':').is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("bcc"))), "Bcc 不能出现在头部");
     assert!(!head.contains("secret@example.com"));
     assert!(head.is_ascii(), "头部和正文都应编码成 7bit 安全的形式");
 
