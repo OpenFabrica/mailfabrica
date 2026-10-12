@@ -14,8 +14,11 @@ def run(*arguments):
 
 def digest(path):
     """校验最终上传的文件内容。"""
+    checksum = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            checksum.update(chunk)
+    return checksum.hexdigest()
 
 
 def main():

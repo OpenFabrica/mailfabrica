@@ -15,8 +15,11 @@ import zipfile
 
 def digest(path):
     """流式校验实际文件而非构建任务状态。"""
+    checksum = hashlib.sha256()
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            checksum.update(chunk)
+    return checksum.hexdigest()
 
 
 def unpack(archive, target):
