@@ -2486,20 +2486,29 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
  "log",
+ "mailfabrica-brand",
  "mailfabrica-engine",
  "mailfabrica-ui-egui",
  "rfd",
  "serde_json",
+ "winresource",
+]
+
+[[package]]
+name = "mailfabrica-brand"
+version = "0.1.1"
+dependencies = [
+ "tiny-skia",
 ]
 
 [[package]]
 name = "mailfabrica-cli"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "log",
  "mailfabrica-engine",
@@ -2509,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-core"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -2519,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-engine"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "keyring",
  "log",
@@ -2537,7 +2546,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-html"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2555,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-mcp"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "log",
  "mailfabrica-engine",
@@ -2564,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-mime"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "html2text",
@@ -2575,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-proto"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -2586,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-rich"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2594,7 +2603,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-store"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "log",
  "mailfabrica-core",
@@ -2606,7 +2615,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-sync"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -2617,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-ui-egui"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "egui",
@@ -2631,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-update"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
  "rustls",
  "semver",
@@ -5841,6 +5850,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winresource"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f6a3cd6ec9ab1013f22fa287a845a072bd580b144b405330446a8407e9badb4"
+dependencies = [
+ "toml",
+ "version_check",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5944,11 +5963,12 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.1-dev"
+version = "0.1.1"
 dependencies = [
+ "mailfabrica-brand",
  "serde_json",
+ "sha2",
  "tempfile",
- "tiny-skia",
 ]
 
 [[package]]

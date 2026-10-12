@@ -44,9 +44,11 @@ flowchart TD
 | `update.open` | `{}` | 重新验证并打开已下载的安装器 |
 | `update.status` | `{}` | 查询 phase、release、received、installer 和 error |
 
-阶段：`idle`、`checking`、`current`、`available`、`downloading`、`verifying`、`ready`、`failed`。`current` 包括尚无正式发布和没有更新版本。`app.status.busy` 包括更新任务，并附带 `update` 状态。
+阶段：`idle`、`checking`、`current`、`available`、`downloading`、`verifying`、`ready`、`failed`、`manual`。`current` 包括尚无正式发布和没有更新版本。`app.status.busy` 包括更新任务，并附带 `update` 状态。
 
 GUI 执行异步命令，轮询 `update.status`；无窗口 CLI/MCP 会等待到空闲或原有 120 秒上限，返回当时状态，不启动系统安装器。超过等待上限时可继续查询状态，`ready.installer` 给出本地路径。连接 GUI 的控制通道/MCP 会由 GUI 打开安装器。任何命令都不接受外部 URL、版本或任意本地路径。
+
+Windows/Linux 的正式产物为 portable 归档；`Client::manual_url` 返回固定官方页面，工作线程产生 `Manual` 事件，引擎返回 `manualUrl` 并请求打开页面。此分支不下载任意文件，也不绕过 Apple 发布者检查；无窗口调用只返回页面 URL。
 
 ## 验证
 

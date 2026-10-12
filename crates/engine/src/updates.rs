@@ -13,6 +13,7 @@ pub enum UpdatePhase {
     Idle,
     Checking,
     Current,
+    Manual,
     Available,
     Downloading,
     Verifying,
@@ -29,6 +30,7 @@ pub struct UpdateState {
     pub received: u64,
     pub installer: Option<PathBuf>,
     pub error: Option<String>,
+    pub manual_url: Option<String>,
 }
 
 impl UpdateState {
@@ -117,6 +119,12 @@ impl Session {
             }
             changed = true;
             match event {
+                Event::Manual(url) => {
+                    self.updates.active = None;
+                    self.updates.state.phase = UpdatePhase::Manual;
+                    self.updates.state.manual_url = Some(url.clone());
+                    self.ui_requests.push(UiRequest::OpenUrl(url));
+                }
                 Event::Checked(release) => {
                     self.updates.active = None;
                     self.updates.state.phase = if release.is_some() { UpdatePhase::Available } else { UpdatePhase::Current };

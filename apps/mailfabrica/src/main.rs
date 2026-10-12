@@ -94,6 +94,20 @@ fn save_ui_state(app: &MailApp, dir: &Path) {
     }
 }
 
+/// macOS 保留 bundle 图标；Windows/Linux 的运行窗口使用相同的原创像素图。
+fn window_icon() -> egui::IconData {
+    if cfg!(target_os = "macos") {
+        return egui::IconData::default();
+    }
+    match mailfabrica_brand::rgba(64) {
+        Ok(rgba) => egui::IconData { rgba, width: 64, height: 64 },
+        Err(error) => {
+            log::warn!("cannot draw application icon: {error}");
+            egui::IconData::default()
+        }
+    }
+}
+
 /// 系统服务：rfd 文件选择框、用系统程序打开网址。
 fn services() -> Services {
     Services {
@@ -152,7 +166,7 @@ fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("MailFabrica")
         // 显式使用系统图标：未设置时 eframe 会把 Dock 图标覆盖成自己的默认 logo。
-        .with_icon(egui::IconData::default())
+        .with_icon(window_icon())
         .with_inner_size([app.ui.sidebar_width.max(170.0) + app.ui.list_width.max(260.0) + 690.0, 800.0])
         .with_min_inner_size([900.0, 560.0])
         .with_app_id("dev.mailfabrica.MailFabrica");

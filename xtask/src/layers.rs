@@ -28,6 +28,7 @@ impl Class {
 /// （所以 mime 和 proto、ui-egui 和 mcp 互相独立）。
 pub const TABLE: &[(&str, Class)] = &[
     ("core", Class::Layer(0)),
+    ("brand", Class::Layer(0)),
     ("mime", Class::Layer(1)),
     ("proto", Class::Layer(1)),
     ("rich", Class::Layer(1)),

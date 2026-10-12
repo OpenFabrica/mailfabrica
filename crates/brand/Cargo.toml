@@ -1,0 +1,10 @@
+[package]
+name = "mailfabrica-brand"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Code-drawn MailFabrica branding shared by native windows and distribution tooling"
+[lints]
+workspace = true
+[dependencies]
+tiny-skia = { workspace = true }

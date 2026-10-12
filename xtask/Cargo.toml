@@ -12,4 +12,5 @@ workspace = true
 [dependencies]
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-tiny-skia = "0.12"
+mailfabrica-brand = { workspace = true }
+sha2 = { workspace = true }

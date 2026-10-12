@@ -1,5 +1,7 @@
 # macOS 构建与公证
 
+Windows/Linux 使用同一 `cargo xtask package` 入口生成 portable 包，见 [跨平台发布](portable-release.md)。
+
 `cargo xtask package` 将当前 checkout 的 release 构建打成 Finder 可打开的应用和 DMG。此流程不推进版本号、不打标签、不推送、不发布、不安装到 `/Applications`。
 
 ## 使用与产物

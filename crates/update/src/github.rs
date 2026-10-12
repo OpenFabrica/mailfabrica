@@ -102,6 +102,10 @@ fn select(metadata: Metadata, current: &str, arch: &str) -> Result<Option<Releas
 }
 
 impl Client for GitHub {
+    /// Windows/Linux 使用 portable 包，显式引导到官方页面，不绕过 macOS 发布者校验。
+    fn manual_url(&self) -> Option<&str> {
+        (!cfg!(target_os = "macos")).then_some("https://github.com/OpenFabrica/mailfabrica/releases/latest")
+    }
     /// 404 表示尚无正式发布；其他网络或元数据错误必须让用户知道，可重试。
     fn check(&self, current: &str) -> Result<Option<Release>, String> {
         let arch = architecture()?;

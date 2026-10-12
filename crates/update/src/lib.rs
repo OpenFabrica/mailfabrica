@@ -31,6 +31,10 @@ pub struct Release {
 
 /// 可替换的发布基础设施；下载进度回调返回 false 时必须取消读取。
 pub trait Client: Send + Sync {
+    /// 没有可验证安装器的平台返回手动更新页；测试客户端默认走安装器流程。
+    fn manual_url(&self) -> Option<&str> {
+        None
+    }
     /// 返回比 current 更新的正式版；未发布或当前已最新时返回 None。
     fn check(&self, current: &str) -> Result<Option<Release>, String>;
     /// 下载指定安装器；调用方再检查长度和哈希，失败时不保存或打开。

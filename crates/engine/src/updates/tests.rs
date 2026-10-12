@@ -137,3 +137,34 @@ fn current_failure_and_stale_results_are_distinct() {
     assert_eq!(s.update().phase, UpdatePhase::Checking);
     assert!(s.update().release.is_none());
 }
+
+/// 手动更新平台只提供官方页面，不错误地进入安装器下载/Apple 签名检查。
+#[test]
+fn manual_platform_update_returns_page_and_disables_download() {
+    struct Manual;
+    impl Client for Manual {
+        /// 指定可返回给 GUI/CLI/MCP 的官方页面。
+        fn manual_url(&self) -> Option<&str> {
+            Some("https://github.com/OpenFabrica/mailfabrica/releases/latest")
+        }
+        /// 手动流程不应调用网络发布检查。
+        fn check(&self, _: &str) -> std::result::Result<Option<Release>, String> {
+            Err("Unexpected network check".into())
+        }
+        /// 手动流程没有可下载安装器。
+        fn download(&self, _: &Release, _: &mut dyn FnMut(u64) -> bool) -> std::result::Result<Vec<u8>, String> {
+            Err("No installer".into())
+        }
+        /// 手动流程不会验证任意本地文件。
+        fn verify_publisher(&self, _: &std::path::Path) -> std::result::Result<(), String> {
+            Err("No installer".into())
+        }
+    }
+    let mut s = session(Arc::new(Manual));
+    s.run("update.check", json!({})).expect("check");
+    s.wait_idle(Duration::from_secs(2));
+    assert_eq!(s.update().phase, UpdatePhase::Manual);
+    assert_eq!(s.take_ui_requests(), vec![UiRequest::OpenUrl("https://github.com/OpenFabrica/mailfabrica/releases/latest".into())]);
+    assert!(s.run("update.download", json!({})).is_err());
+    assert_eq!(s.run("update.status", json!({})).expect("status")["manualUrl"], "https://github.com/OpenFabrica/mailfabrica/releases/latest");
+}

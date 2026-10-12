@@ -132,6 +132,10 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
 
 /// 英文 → 中文。
 pub const TABLE: &[(&str, &str)] = &[
+    (
+        "Download the package for your platform from the official release page and replace the previous app manually.",
+        "从官方发布页下载对应平台的包，解压后手动替换旧版应用。",
+    ),
     ("Software Update", "软件更新"),
     ("Check for Updates", "检查更新"),
     ("Download and Open Installer", "下载并打开安装器"),

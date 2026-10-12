@@ -18,6 +18,7 @@ pub enum Task {
 /// 更新线程返回的可观察结果，任务号由 Worker 附加。
 pub enum Event {
     Checked(Option<Release>),
+    Manual(String),
     Progress(u64),
     Downloaded(Vec<u8>),
     Verified(PathBuf),
@@ -46,7 +47,10 @@ impl Worker {
             .name("mail-update".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match task {
-                    Task::Check(current) => client.check(&current).map(Event::Checked),
+                    Task::Check(current) => match client.manual_url() {
+                        Some(url) => Ok(Event::Manual(url.into())),
+                        None => client.check(&current).map(Event::Checked),
+                    },
                     Task::Download(release) => {
                         let bytes = client
                             .download(&release, &mut |count| !stopped.load(Ordering::Relaxed) && tx.send((id, Event::Progress(count))).is_ok())?;

@@ -11,6 +11,8 @@ mod layers;
 mod notary;
 #[cfg(target_os = "macos")]
 mod package;
+#[cfg(not(target_os = "macos"))]
+mod portable;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -21,7 +23,7 @@ usage: cargo xtask <command>
 commands:
   ci              fmt --check, clippy -D warnings, test, layers (stops at the first failure)
   layers          enforce the crate dependency layering
-  package         build and verify a local macOS app and DMG
+  package         build native macOS app/DMG or Windows/Linux portable package
   icon            render the original app logo to dist/MailFabrica-logo.png
 ";
 
@@ -56,7 +58,7 @@ fn cmd_package() -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err("cargo xtask package currently supports macOS only".into())
+        portable::build()
     }
 }
 

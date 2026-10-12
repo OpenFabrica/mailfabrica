@@ -13,6 +13,7 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui) {
     let text = match state.phase {
         UpdatePhase::Idle => lang.t("Check the official GitHub releases for a newer stable version."),
         UpdatePhase::Checking => lang.t("Checking for updates…"),
+        UpdatePhase::Manual => lang.t("Download the package for your platform from the official release page and replace the previous app manually."),
         UpdatePhase::Current => lang.t("No newer stable release is available."),
         UpdatePhase::Available => lang.t("Release notes"),
         UpdatePhase::Downloading => lang.t("Downloading installer…"),
@@ -45,6 +46,11 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui) {
         if ui.link(lang.t("View release")).clicked() {
             app.open_url(&release.page);
         }
+    }
+    if let Some(url) = &state.manual_url
+        && ui.link(lang.t("View release")).clicked()
+    {
+        app.open_url(url);
     }
     ui.add_space(12.0);
     ui.horizontal_wrapped(|ui| {
