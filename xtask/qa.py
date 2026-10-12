@@ -106,7 +106,7 @@ def main():
     assert digest(archive) == next(archive.parent.glob("*.sha256")).read_text().split()[0]
     screenshots = Path("dist/qa").resolve()
     screenshots.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="mailfabrica-native-qa-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="mailfabrica-update-qa-") as temporary:
         unpack(archive, Path(temporary))
         roots = list(Path(temporary).iterdir())
         assert len(roots) == 1

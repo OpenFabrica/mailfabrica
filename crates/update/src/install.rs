@@ -160,7 +160,15 @@ pub fn prepare(release: &Release, package: &Path, target: InstallTarget) -> Resu
         .map_err(|_| "Could not save update plan")?;
     let guard = fs::File::create_new(stage.join("parent.lock")).map_err(|_| "Could not create update lock")?;
     guard.try_lock().map_err(|_| "Could not lock update transaction")?;
-    let helper = stage.join(if cfg!(windows) { "helper.exe" } else { "helper" });
+    let helper = helper_path(stage);
+    #[cfg(target_os = "macos")]
+    {
+        // 应用签名绑定 Info.plist；单独复制 Mach-O 会被系统拒绝执行，必须保留完整签名 bundle。
+        let helper_bundle = stage.join("helper.app");
+        crate::publisher::run(Command::new("/usr/bin/ditto").arg(stage.join("payload").join(&name)).arg(&helper_bundle))?;
+        verify_bundle(&helper_bundle)?;
+    }
+    #[cfg(not(target_os = "macos"))]
     fs::copy(&new_executable, &helper).map_err(|_| "Could not prepare update helper")?;
     let log = fs::File::create_new(stage.join("helper.log")).map_err(|_| "Could not create update log")?;
     Command::new(&helper)
@@ -172,6 +180,17 @@ pub fn prepare(release: &Release, package: &Path, target: InstallTarget) -> Resu
         .spawn()
         .map_err(|_| "Could not start update helper")?;
     Ok(Handoff { stage: temporary.keep(), _guard: guard })
+}
+
+/// macOS 辅助进程保留完整应用签名上下文，portable 平台使用独立可执行文件。
+fn helper_path(stage: &Path) -> PathBuf {
+    stage.join(if cfg!(target_os = "macos") {
+        "helper.app/Contents/MacOS/mailfabrica"
+    } else if cfg!(windows) {
+        "helper.exe"
+    } else {
+        "helper"
+    })
 }
 
 /// 校验已签名 DMG 内的完整应用，再用 ditto 保留 bundle 元数据复制至同盘准备目录。
@@ -270,7 +289,7 @@ fn read_plan(stage: &Path) -> Result<Plan, String> {
 /// 辅助进程等待父锁释放，确认正常提交，替换后等待新 GUI 首帧确认；失败回退旧应用。
 pub fn run_helper(stage: &Path) -> Result<(), String> {
     let stage = fs::canonicalize(stage).map_err(|_| "Invalid update directory")?;
-    let expected = stage.join(if cfg!(windows) { "helper.exe" } else { "helper" });
+    let expected = helper_path(&stage);
     if std::env::current_exe().and_then(fs::canonicalize).map_err(|_| "Could not locate update helper")? != expected {
         return Err("Update helper must run from the prepared directory".into());
     }
