@@ -14,14 +14,16 @@ Windows 发布包使用静态 CRT，解压后运行 `mailfabrica.exe`，CLI 为 
 
 Ubuntu/Debian 运行依赖：`sudo apt install libfontconfig1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers fonts-noto-cjk`。X11 键盘库由窗口库动态加载，单独运行 `ldd` 无法发现它缺失，因此发布验收必须实际启动 GUI。
 
-Windows/Linux 更新入口打开官方发布页，由用户选择架构、解压并替换旧版。macOS 的自动下载、SHA-256、Apple 发布者与 Gatekeeper 校验保持独立，不把这套信任规则静默套用到其他系统。
+从 0.1.2 开始，应用内检查更新会选择本机架构，下载并校验安装包，自动替换应用文件并重启，失败时恢复旧版。安装目录必须允许当前用户写入，邮件数据和其他用户文件不进入替换计划。0.1.0/0.1.1 仍使用旧更新流程，需要先安装新版。
+
+macOS 额外验证 Apple 发布者、完整应用签名及 Gatekeeper 公证信任；Windows/Linux 使用固定官方 HTTPS 发布源与 GitHub SHA-256 digest，尚无独立发布者签名。更新流程与限制见 [应用更新](updates.md) 和 [使用帮助](update-help.md)。
 
 ## 实现边界
 
 - `crates/brand`（L0）只负责原创矢量图标的 PNG、ICO 和 RGBA 编码，不依赖 core、UI、网络或存储。增加此独立模块是为了让窗口图标、Windows PE 资源和打包工具共享唯一源素材，避免在业务 core 中引入图形职责或保存位图。
 - `apps/mailfabrica/build.rs` 在 Windows 目标生成 ICO 并嵌入 PE 图标/产品版本资源；运行窗口使用同一 RGBA，macOS 保留 bundle 图标。
 - `xtask/src/portable.rs` 只在对应原生 OS/架构运行，拒绝 `CARGO_BUILD_TARGET`。归档失败清理临时目录，不覆盖现有发布包。
-- `xtask/qa.py` 是交付验收工具：检查归档和包内哈希、PE/ELF 架构、Windows 图标资源、CLI 响应与演示桌面截图，关闭自己启动的进程。测试不使用真实账户。
+- `xtask/qa.py` 是交付验收工具：检查归档和包内哈希、PE/ELF 架构、Windows 图标资源、CLI 响应与演示桌面截图，关闭自己启动的进程，再验收真实更新助手的应用替换、GUI 重启与用户文件保留。测试只使用临时演示安装，不使用真实账户。
 - `.github/workflows/portable.yml` 使用固定 SHA 的官方 Actions；构建 job 只读仓库，只有全部平台成功后的上传 job 能写 Release。
 
 ## 流程
@@ -34,7 +36,7 @@ flowchart LR
     A --> L2[Linux arm64]
     W1 & W2 & L1 & L2 --> B[fmt / clippy / tests / layers]
     B --> C[原生 release 构建与归档]
-    C --> D[解包校验、运行 CLI、桌面截图]
+    C --> D[解包校验、运行 CLI、桌面截图与自动替换验收]
     D --> E[全部成功后上传至草稿 Release]
     E --> F[合并 macOS 公证产物并核对 GitHub digest]
     F --> G[人工或已授权的代理公开发布]
