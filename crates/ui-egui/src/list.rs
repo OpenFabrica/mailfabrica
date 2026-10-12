@@ -17,7 +17,7 @@ use crate::{Language, MailApp};
 /// 分组头高度。
 const HEADER_H: f32 = 28.0;
 /// 邮件行高度（三行文字）。
-const ROW_H: f32 = 68.0;
+const ROW_H: f32 = 80.0;
 
 /// 列表里的一行：日期分组头，或引擎列表行（`MailView::rows` 里的下标，一封邮件或一个主题组）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -374,66 +374,108 @@ fn group_who(members: &[&MessageMeta], role: FolderRole, lang: Language) -> Stri
     names.join(", ")
 }
 
-/// 画一行：未读蓝点、发件人（未读加粗）、时间、主题、附件和红旗图标、预览。`members` 是这一行的邮件
+/// 列表头像缩写：中文取首字，英文取前两个连续字母；忽略名字前的引号和空白。
+fn avatar_label(name: &str) -> String {
+    let mut chars = name.chars().skip_while(|c| !c.is_alphanumeric());
+    let Some(first) = chars.next() else { return "?".into() };
+    let mut label: String = first.to_uppercase().collect();
+    if first.is_ascii_alphabetic()
+        && let Some(second) = chars.next().filter(char::is_ascii_alphabetic)
+    {
+        label.push(second.to_ascii_lowercase());
+    }
+    label
+}
+
+/// 画一行：头像与未读点、发件人（未读加粗）、附件、时间、主题和状态图标、预览。`members` 是这一行的邮件
 /// （最新的在前）：多于一封时是主题组，名字后面画封数角标，未读/红旗/附件看整组，其余显示最新一封的。
 fn paint_row(ui: &Ui, rect: Rect, members: &[&MessageMeta], role: FolderRole, selected: bool, hovered: bool, lang: Language, now: i64, t: &Tokens) {
     let Some(m) = members.first().copied() else { return };
     let grouped = members.len() > 1;
-    let p = ui.painter();
+    // 每行单独裁剪，窄列表里的长日期、封数或图标也不能越过列表边界。
+    let p = &ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    let card = rect.shrink2(vec2(6.0, 0.0));
     if selected {
-        p.rect_filled(rect, 0.0, t.selected);
-        p.rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 0.0, t.accent);
+        p.rect_filled(card, 6.0, t.accent);
     } else if hovered {
-        p.rect_filled(rect, 0.0, t.group);
+        p.rect_filled(card, 6.0, t.group);
     }
-    p.line_segment([pos2(rect.left() + 26.0, rect.bottom() - 0.5), pos2(rect.right(), rect.bottom() - 0.5)], Stroke::new(1.0, t.separator));
+    let left = rect.left() + 62.0;
+    let right = rect.right() - 14.0;
+    if !selected {
+        p.line_segment([pos2(left, rect.bottom() - 0.5), pos2(right, rect.bottom() - 0.5)], Stroke::new(0.5, t.separator));
+    }
+    let text = if selected { t.on_accent } else { t.text };
+    let faint = if selected { t.on_accent.gamma_multiply(0.72) } else { t.text_faint };
+    let dim = if selected { faint } else { t.text_dim };
+    // 已发送/草稿的头像与列表显示的收件人一致；其他文件夹使用最新邮件的发件人。
+    let address = if matches!(role, FolderRole::Sent | FolderRole::Drafts) { m.to.first() } else { Some(&m.from) };
+    let avatar = pos2(rect.left() + 33.0, rect.top() + 29.0);
+    let avatar_bg = if selected { t.on_accent.gamma_multiply(0.14) } else { t.accent.gamma_multiply(0.07) };
+    p.circle_filled(avatar, 17.0, avatar_bg);
+    p.text(
+        avatar,
+        egui::Align2::CENTER_CENTER,
+        avatar_label(address.map(|a| a.display_name()).unwrap_or("")),
+        theme::ui_bold(14.0),
+        if selected { t.on_accent } else { t.accent },
+    );
     let unread = members.iter().any(|x| !x.flags.seen);
     if unread {
-        p.circle_filled(pos2(rect.left() + 13.0, rect.top() + 19.0), 4.0, t.accent);
+        p.circle(
+            avatar + vec2(12.0, 12.0),
+            3.5,
+            if selected { t.on_accent } else { t.accent },
+            Stroke::new(1.5, if selected { t.accent } else { t.list }),
+        );
     }
-    let left = rect.left() + 26.0;
-    let right = rect.right() - 14.0;
-    // 第一行：发件人 + （组的）封数角标 + 时间（已发送/草稿显示收件人）
+    // 第一行：发件人 + （组的）封数角标 + 附件 + 时间，预留位置后再截断名字。
     let who = if grouped { group_who(members, role, lang) } else { who_of(m, role, lang) };
     let time = list_time(lang, m.date, now);
-    let tg = p.layout_no_wrap(time, theme::ui_font(12.0), t.text_faint);
+    let tg = widgets::elided(p, &time, theme::ui_font(12.0), faint, (right - left) * 0.45);
     let y1 = rect.top() + 19.0;
-    p.galley(pos2(right - tg.size().x, y1 - tg.size().y / 2.0), tg.clone(), t.text_faint);
-    let badge = grouped.then(|| p.layout_no_wrap(members.len().to_string(), theme::ui_font(11.0), t.text_dim));
+    p.galley(pos2(right - tg.size().x, y1 - tg.size().y / 2.0), tg.clone(), faint);
+    let badge = grouped.then(|| p.layout_no_wrap(members.len().to_string(), theme::ui_font(11.0), dim));
     let badge_w = badge.as_ref().map(|g| g.size().x + 12.0 + 6.0).unwrap_or(0.0);
+    let attached = members.iter().any(|x| x.has_attachments);
+    let attachment_w = if attached { 18.0 } else { 0.0 };
     let name_font = if unread { theme::ui_bold(14.0) } else { theme::ui_font(14.0) };
-    let ng = widgets::elided(p, &who, name_font, t.text, right - tg.size().x - 10.0 - left - badge_w);
+    let ng = widgets::elided(p, &who, name_font, text, right - tg.size().x - 10.0 - left - badge_w - attachment_w);
     let name_w = ng.size().x;
-    p.galley(pos2(left, y1 - ng.size().y / 2.0), ng, t.text);
+    p.galley(pos2(left, y1 - ng.size().y / 2.0), ng, text);
     if let Some(bg) = badge {
         let r = Rect::from_min_size(pos2(left + name_w + 6.0, y1 - 8.0), vec2(bg.size().x + 12.0, 16.0));
-        p.rect(r, 8.0, t.chip, Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
-        p.galley(pos2(r.center().x - bg.size().x / 2.0, r.center().y - bg.size().y / 2.0), bg, t.text_dim);
+        p.rect(
+            r,
+            8.0,
+            if selected { avatar_bg } else { t.chip },
+            Stroke::new(1.0, if selected { faint } else { t.separator }),
+            egui::StrokeKind::Inside,
+        );
+        p.galley(pos2(r.center().x - bg.size().x / 2.0, r.center().y - bg.size().y / 2.0), bg, dim);
     }
-    // 第二行：主题 + 附件/红旗图标
+    if attached {
+        icons::paint(p, Rect::from_center_size(pos2(left + name_w + badge_w + 10.0, y1), vec2(14.0, 14.0)), Icon::Paperclip, dim);
+    }
+    // 第二行：主题 + 红旗/回复图标；已读主题仍使用深色，维持三行之间的阅读层级。
     let y2 = rect.top() + 39.0;
     let mut icons_w = 0.0;
     if members.iter().any(|x| x.flags.flagged) {
-        icons::paint(p, Rect::from_center_size(pos2(right - 7.0, y2), vec2(14.0, 14.0)), Icon::Flag, t.flag);
-        icons_w += 20.0;
-    }
-    if members.iter().any(|x| x.has_attachments) {
-        icons::paint(p, Rect::from_center_size(pos2(right - icons_w - 7.0, y2), vec2(14.0, 14.0)), Icon::Paperclip, t.text_dim);
+        icons::paint(p, Rect::from_center_size(pos2(right - 7.0, y2), vec2(14.0, 14.0)), Icon::Flag, if selected { t.on_accent } else { t.flag });
         icons_w += 20.0;
     }
     if m.flags.answered {
-        icons::paint(p, Rect::from_center_size(pos2(right - icons_w - 7.0, y2), vec2(13.0, 13.0)), Icon::Reply, t.text_faint);
+        icons::paint(p, Rect::from_center_size(pos2(right - icons_w - 7.0, y2), vec2(13.0, 13.0)), Icon::Reply, faint);
         icons_w += 20.0;
     }
     let subject = if m.subject.trim().is_empty() { lang.t("(no subject)") } else { m.subject.as_str() };
-    let subj_c = if unread { t.text } else { t.text_dim };
-    let sg = widgets::elided(p, subject, theme::ui_font(13.0), subj_c, right - icons_w - left);
-    p.galley(pos2(left, y2 - sg.size().y / 2.0), sg, subj_c);
+    let sg = widgets::elided(p, subject, theme::ui_font(13.0), text, right - icons_w - left);
+    p.galley(pos2(left, y2 - sg.size().y / 2.0), sg, text);
     // 第三行：预览
     if !m.preview.is_empty() {
-        let y3 = rect.top() + 57.0;
-        let pg = widgets::elided(p, m.preview.trim(), theme::ui_font(12.0), t.text_faint, right - left);
-        p.galley(pos2(left, y3 - pg.size().y / 2.0), pg, t.text_faint);
+        let y3 = rect.top() + 59.0;
+        let pg = widgets::elided(p, m.preview.trim(), theme::ui_font(12.0), faint, right - left);
+        p.galley(pos2(left, y3 - pg.size().y / 2.0), pg, faint);
     }
 }
 
@@ -475,6 +517,21 @@ fn empty_state(app: &mut MailApp, ui: &mut Ui, no_account: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_labels_handle_sender_names() {
+        for (name, label) in [
+            ("阿里云计算", "阿"),
+            ("Deligeer, Joe", "De"),
+            ("TDengine", "Td"),
+            (" \"alice@example.com\"", "Al"),
+            ("🧑 王芳", "王"),
+            ("A", "A"),
+            ("   ", "?"),
+        ] {
+            assert_eq!(avatar_label(name), label);
+        }
+    }
 
     #[test]
     fn times_follow_buckets() {
