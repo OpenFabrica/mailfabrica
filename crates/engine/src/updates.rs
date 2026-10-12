@@ -17,8 +17,10 @@ pub enum UpdatePhase {
     Available,
     Downloading,
     Verifying,
+    Installing,
     Ready,
     Failed,
+    Cancelled,
 }
 
 /// 界面、CLI 和 MCP 共用的只读更新状态。
@@ -36,7 +38,7 @@ pub struct UpdateState {
 impl UpdateState {
     /// 忙碌时禁止重复启动任务；独立于邮件同步状态。
     pub fn busy(&self) -> bool {
-        matches!(self.phase, UpdatePhase::Checking | UpdatePhase::Downloading | UpdatePhase::Verifying)
+        matches!(self.phase, UpdatePhase::Checking | UpdatePhase::Downloading | UpdatePhase::Verifying | UpdatePhase::Installing)
     }
 }
 
@@ -46,12 +48,14 @@ pub(crate) struct Updates {
     state: UpdateState,
     active: Option<u64>,
     next: u64,
+    target: Option<mailfabrica_update::InstallTarget>,
+    handoff: Option<mailfabrica_update::Handoff>,
 }
 
 impl Updates {
     /// 不隐式检查更新；用户触发命令后才联网。
     pub(crate) fn new(client: Arc<dyn Client>) -> Self {
-        Self { worker: Worker::new(client), state: UpdateState::default(), active: None, next: 0 }
+        Self { worker: Worker::new(client), state: UpdateState::default(), active: None, next: 0, target: None, handoff: None }
     }
 
     /// 登记并启动任务；启动失败立即进入可重试状态。
@@ -77,6 +81,31 @@ impl Updates {
 }
 
 impl Session {
+    /// 仅宿主程序可配置实际安装位置；公开命令不能指定任意替换路径。
+    pub fn configure_update_target(&mut self, target: mailfabrica_update::InstallTarget) {
+        self.updates.target = Some(target);
+    }
+
+    /// 宿主正常退出时提交已经准备好的更新；异常退出不执行替换。
+    pub fn commit_update(&self) -> Result<()> {
+        if let Some(handoff) = &self.updates.handoff {
+            if self.composes.iter().any(|c| c.dirty) {
+                return Err(EngineError::Other("Save or close unsaved messages before updating".into()));
+            }
+            handoff.commit().map_err(EngineError::Other)?;
+        }
+        Ok(())
+    }
+
+    /// 取消尚未交接的安装；迟到的准备结果没有提交标记，辅助进程不会替换应用。
+    pub(crate) fn cancel_update(&mut self) {
+        self.updates.handoff = None;
+        self.updates.active = None;
+        self.updates.state.phase = UpdatePhase::Cancelled;
+        self.updates.state.error = None;
+        self.revision += 1;
+    }
+
     /// 当前更新状态，供界面与命令查询，不产生网络或磁盘副作用。
     pub fn update(&self) -> &UpdateState {
         &self.updates.state
@@ -84,6 +113,7 @@ impl Session {
 
     /// 检查比正在运行版本更新的稳定版；先丢弃先前选择，避免复用过时元数据。
     pub(crate) fn check_update(&mut self) -> Result<()> {
+        self.updates.handoff = None;
         self.updates.state = UpdateState::default();
         let result = self.updates.start(Task::Check(env!("CARGO_PKG_VERSION").into()), UpdatePhase::Checking);
         self.revision += 1;
@@ -92,6 +122,9 @@ impl Session {
 
     /// 下载已经检查出的安装包；参数不允许传入任意 URL、版本或本地路径。
     pub(crate) fn download_update(&mut self) -> Result<()> {
+        if self.composes.iter().any(|c| c.dirty) {
+            return Err(EngineError::Other("Save or close unsaved messages before updating".into()));
+        }
         let release = self.update().release.clone().ok_or_else(|| EngineError::Other("Check for an update first".into()))?;
         self.updates.state.received = 0;
         self.updates.state.installer = None;
@@ -100,8 +133,11 @@ impl Session {
         result
     }
 
-    /// 再次打开安装器前重新检查哈希、签名和 Gatekeeper，防止缓存被篡改。
+    /// 再次安装前重新检查完整性和发布者，防止缓存被篡改。
     pub(crate) fn reopen_installer(&mut self) -> Result<()> {
+        if self.composes.iter().any(|c| c.dirty) {
+            return Err(EngineError::Other("Save or close unsaved messages before updating".into()));
+        }
         let release = self.update().release.clone().ok_or_else(|| EngineError::Other("No downloaded installer".into()))?;
         let path = self.update().installer.clone().ok_or_else(|| EngineError::Other("No verified installer".into()))?;
         let result = self.updates.start(Task::Verify(release, path), UpdatePhase::Verifying);
@@ -109,7 +145,7 @@ impl Session {
         result
     }
 
-    /// 引擎线程保存下载结果；签名检查移交后台，只有最终验证成功才提出打开请求。
+    /// 引擎线程保存下载结果；背景验证与准备完成后才请求正常退出交接。
     pub(crate) fn pump_updates(&mut self) -> bool {
         let events = self.updates.worker.poll();
         let mut changed = false;
@@ -141,10 +177,32 @@ impl Session {
                     }
                 }
                 Event::Verified(path) => {
+                    // 下载期间可能又打开或编辑写信窗口，不能在准备完成后丢弃新输入。
+                    if self.composes.iter().any(|c| c.dirty) {
+                        self.updates.fail("Save or close unsaved messages before updating".into());
+                        continue;
+                    }
                     self.updates.active = None;
                     self.updates.state.phase = UpdatePhase::Ready;
                     self.updates.state.installer = Some(path.clone());
-                    self.ui_requests.push(UiRequest::OpenInstaller(path));
+                    if let Some(target) = self.updates.target.clone() {
+                        let result = self.update().release.clone().ok_or_else(|| "Missing update metadata".to_string()).and_then(|release| {
+                            self.updates.start(Task::Prepare(release, path, target), UpdatePhase::Installing).map_err(|e| e.to_string())
+                        });
+                        if let Err(error) = result {
+                            self.updates.fail(error);
+                        }
+                    }
+                }
+                Event::Prepared(handoff) => {
+                    if self.composes.iter().any(|c| c.dirty) {
+                        self.updates.fail("Save or close unsaved messages before updating".into());
+                        continue;
+                    }
+                    self.updates.active = None;
+                    self.updates.handoff = Some(handoff);
+                    self.updates.state.phase = UpdatePhase::Installing;
+                    self.ui_requests.push(UiRequest::RestartForUpdate);
                 }
                 Event::Failed(error) => self.updates.fail(error),
             }

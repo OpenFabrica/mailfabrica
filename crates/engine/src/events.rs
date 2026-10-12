@@ -35,6 +35,10 @@ pub(crate) fn add_account_hint(lang: &str, account: &AccountConfig, err: &MailEr
     let domain = account.address().domain();
     match err {
         MailError::Auth(_) => {
+            let host = account.imap.host.trim().trim_end_matches('.').to_ascii_lowercase();
+            if host == "qiye.163.com" || host.ends_with(".qiye.163.com") {
+                return tr(lang, "hintNetEaseEnterprise", &[&account.email, err]);
+            }
             let auth_code = ["qq.com", "foxmail.com", "vip.qq.com", "163.com", "126.com", "yeah.net", "sina.com", "sina.cn", "139.com", "aliyun.com"];
             if auth_code.contains(&domain.as_str()) {
                 tr(lang, "hintAuthCode", &[&account.email, err, &domain])

@@ -1,23 +1,27 @@
 //! 更新基础设施（L3）：固定 GitHub 发布源、限时下载、文件完整性和 Apple 发布者验证。
-//! 不依赖界面或邮件存储；后台线程返回数据，由引擎保存，再在后台验证已保存的安装器。
+//! 不依赖界面或邮件存储；引擎保存安装包，后台验证与准备，独立辅助进程在正常退出后替换应用。
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod archive;
 mod github;
+mod install;
 mod publisher;
+mod transaction;
 mod worker;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use github::GitHub;
+pub use install::{Handoff, InstallTarget, acknowledge, prepare, run_helper};
 pub use worker::{Event, Task, Worker};
 
 pub const REPOSITORY: &str = "https://github.com/OpenFabrica/mailfabrica";
 pub const MAX_INSTALLER_BYTES: u64 = 128 << 20;
 
 /// 正式版本及本机安装包；仅由经过校验的发布元数据构造。
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Release {
     pub version: String,

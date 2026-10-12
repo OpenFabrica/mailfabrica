@@ -179,7 +179,11 @@ def main():
                 if process.poll() is None:
                     process.terminate()
                     process.wait(timeout=20)
-    print(f"VERIFIED: {archive.name}; native architecture, hashes, CLI and GUI screenshots")
+        result = subprocess.run(["cargo", "xtask", "update-qa", str(archive.resolve()), manifest["version"], str(gui), str(port)],
+                                text=True, encoding="utf-8", capture_output=True, timeout=180)
+        (screenshots / f"{args.platform}-{args.arch}-automatic-update.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        assert result.returncode == 0, result.stdout + result.stderr
+    print(f"VERIFIED: {archive.name}; native architecture, hashes, CLI, GUI screenshots and automatic replacement")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ mod notary;
 mod package;
 #[cfg(not(target_os = "macos"))]
 mod portable;
+mod update_qa;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -24,6 +25,7 @@ commands:
   ci              fmt --check, clippy -D warnings, test, layers (stops at the first failure)
   layers          enforce the crate dependency layering
   package         build native macOS app/DMG or Windows/Linux portable package
+  update-qa       verify automatic replacement in a disposable installation
   icon            render the original app logo to dist/MailFabrica-logo.png
 ";
 
@@ -34,6 +36,7 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("ci") => cmd_ci(),
         Some("package") => cmd_package(),
+        Some("update-qa") => update_qa::run(args.get(1..).unwrap_or_default()),
         Some("icon") => cmd_icon(),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");

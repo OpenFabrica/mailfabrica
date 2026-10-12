@@ -1165,3 +1165,35 @@ fn open_group_follows_new_and_removed_mail() {
     assert_eq!(s.view().group, None);
     assert_eq!(s.view().focused.as_ref(), Some(&keys[0]));
 }
+
+/// 企业域名认证失败按网易服务器识别授权密码提示，不能依赖自定义邮箱域名。
+#[test]
+fn netease_enterprise_auth_hint_uses_server_identity() {
+    let mut account = AccountConfig::new("name@company.example", "Name");
+    account.imap.host = "imaphz.qiye.163.com".into();
+    let error = mailfabrica_core::MailError::Auth("ERR.LOGIN.IPDENY".into());
+    let hint = crate::events::add_account_hint("zh-Hans", &account, &error);
+    assert!(hint.contains("客户端授权密码"), "{hint}");
+    assert!(hint.contains("IMAP/SMTP") && hint.contains("完整企业邮箱地址") && hint.contains("IPDENY"));
+    account.imap.host = "imap.qiye.163.com.attacker.example".into();
+    assert!(!crate::events::add_account_hint("zh-Hans", &account, &error).contains("网易企业邮箱"));
+}
+
+/// 选择企业服务商的命令与 GUI 同路径；用户显式服务器覆盖预设，未知服务商拒绝。
+#[test]
+fn account_provider_presets_and_explicit_overrides() {
+    let mut s = Session::demo().expect("demo");
+    let result =
+        s.execute("account.add", json!({"email":"one@company.example","password":"demo","provider":"qiye163","verify":false})).expect("provider");
+    let account = s.account(result["id"].as_str().expect("id")).expect("account");
+    assert_eq!(account.imap.host, "imap.qiye.163.com");
+    assert_eq!(account.smtp.host, "smtp.qiye.163.com");
+    let result = s
+        .execute(
+            "account.add",
+            json!({"email":"two@company.example","password":"demo","provider":"qiye163","verify":false,"imapHost":"custom.company.example"}),
+        )
+        .expect("explicit");
+    assert_eq!(s.account(result["id"].as_str().expect("id")).expect("account").imap.host, "custom.company.example");
+    assert!(s.execute("account.add", json!({"email":"three@company.example","password":"demo","provider":"unknown"})).is_err());
+}

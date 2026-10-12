@@ -16,7 +16,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             "Add Account…",
             ["Account"],
             None,
-            "{email, password, name?, login?, imapHost?, imapPort?, imapSecurity?, smtpHost?, smtpPort?, smtpSecurity?, verify?}",
+            "{email, password, provider?, name?, login?, imapHost?, imapPort?, imapSecurity?, smtpHost?, smtpPort?, smtpSecurity?, verify?}",
             always,
             add
         ),
@@ -89,7 +89,13 @@ fn add(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let password = str_param(p, "password").filter(|v| !v.is_empty()).ok_or_else(|| bad(CMD, "`password` is required"))?.to_string();
     let default_name = email.split('@').next().unwrap_or(email).to_string();
+    let selected_provider =
+        str_param(p, "provider").map(|id| mailfabrica_core::provider(id).ok_or_else(|| bad(CMD, "unknown mailbox provider"))).transpose()?;
     let mut account = AccountConfig::new(email, &default_name);
+    if let Some((imap, smtp)) = selected_provider.and_then(|p| p.server_configs()) {
+        account.imap = imap;
+        account.smtp = smtp;
+    }
     apply_fields(CMD, &mut account, p)?;
     if account.name.is_empty() {
         account.name = default_name;
@@ -111,7 +117,7 @@ fn add(s: &mut Session, p: &Json) -> Result<Json> {
         let kind = if explicit {
             JobKind::Test
         } else {
-            let (imap, smtp) = server_candidates(email);
+            let (imap, smtp) = selected_provider.and_then(|p| p.server_candidates()).unwrap_or_else(|| server_candidates(email));
             JobKind::Detect { imap, smtp }
         };
         s.submit_job(Job { account: account.clone(), password: password.clone(), kind }, Action::AddAccount { account, password });

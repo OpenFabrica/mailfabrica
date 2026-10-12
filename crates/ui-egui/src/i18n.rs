@@ -95,8 +95,9 @@ fn lookup(key: &str) -> Option<&'static str> {
 /// 命令 id → (英文, 中文)。
 pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("update.check", "Check for Updates", "检查更新"),
-    ("update.download", "Download and Open Installer", "下载并打开安装器"),
-    ("update.open", "Open Installer", "打开安装器"),
+    ("update.cancel", "Cancel Update", "取消更新"),
+    ("update.download", "Download and Install Update", "下载并自动安装"),
+    ("update.open", "Install Update", "安装更新"),
     ("update.status", "Update Status", "更新状态"),
     ("account.add", "Add Account", "添加账户"),
     ("account.update", "Account Settings", "账户设置"),
@@ -132,14 +133,23 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
 
 /// 英文 → 中文。
 pub const TABLE: &[(&str, &str)] = &[
+    ("Update cancelled. The current application was not replaced.", "已取消更新，当前应用未被替换。"),
+    ("Cancel Update", "取消更新"),
+    ("Save or close unsaved messages before updating", "更新前请保存或关闭尚未保存的写信窗口。"),
+    (
+        "NetEase Enterprise Mail requires a client authorization password. In webmail, enable IMAP/SMTP in Settings → Account and Security → Client Settings, generate an authorization password and confirm it before copying.",
+        "网易企业邮箱需要客户端授权密码。在网页邮箱的“设置 → 账号与安全 → 客户端设置”中开启 IMAP/SMTP，生成授权密码，确认生效后再复制到这里。",
+    ),
     (
         "Download the package for your platform from the official release page and replace the previous app manually.",
         "从官方发布页下载对应平台的包，解压后手动替换旧版应用。",
     ),
+    ("Preparing the update. MailFabrica will restart automatically…", "正在准备更新，完成后将自动替换并重启应用…"),
+    ("The update is verified and ready to install.", "更新已通过校验，可直接安装。"),
     ("Software Update", "软件更新"),
     ("Check for Updates", "检查更新"),
-    ("Download and Open Installer", "下载并打开安装器"),
-    ("Open Installer", "打开安装器"),
+    ("Download and Install Update", "下载并自动安装"),
+    ("Install Update", "安装更新"),
     ("Installer saved", "安装器已保存"),
     ("Checking for updates…", "正在检查更新…"),
     ("No newer stable release is available.", "当前没有更新的正式版本。"),

@@ -122,6 +122,18 @@ pub struct Provider {
 }
 
 impl Provider {
+    /// 企业服务商的安全服务器候选；认证失败不盲目遍历，网络断开才使用备用地址。
+    pub fn server_candidates(&self) -> Option<(Vec<ServerConfig>, Vec<ServerConfig>)> {
+        if self.id == "qiye163" {
+            let tls = |hosts: &[&str], port| hosts.iter().map(|host| ServerConfig::new(*host, port, Security::Tls)).collect();
+            return Some((
+                tls(&["imap.qiye.163.com", "imaphz.qiye.163.com", "hwhzimap.qiye.163.com"], 993),
+                tls(&["smtp.qiye.163.com", "smtphz.qiye.163.com", "hwhzsmtp.qiye.163.com"], 465),
+            ));
+        }
+        self.server_configs().map(|(imap, smtp)| (vec![imap], vec![smtp]))
+    }
+
     /// 固定服务器转成配置；没有固定服务器时为 None。
     pub fn server_configs(&self) -> Option<(ServerConfig, ServerConfig)> {
         self.servers.map(|(i, s)| (ServerConfig::new(i.0, i.1, i.2), ServerConfig::new(s.0, s.1, s.2)))

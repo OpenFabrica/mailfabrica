@@ -8,11 +8,12 @@ use std::sync::{
     mpsc,
 };
 
-/// 网络、下载和系统验证任务；不写邮件存储或安装器文件。
+/// 网络、下载、系统验证及应用准备任务；不访问邮件存储，准备阶段只写应用旁的私有目录。
 pub enum Task {
     Check(String),
     Download(Release),
     Verify(Release, PathBuf),
+    Prepare(Release, PathBuf, crate::InstallTarget),
 }
 
 /// 更新线程返回的可观察结果，任务号由 Worker 附加。
@@ -22,6 +23,7 @@ pub enum Event {
     Progress(u64),
     Downloaded(Vec<u8>),
     Verified(PathBuf),
+    Prepared(crate::Handoff),
     Failed(String),
 }
 
@@ -57,6 +59,7 @@ impl Worker {
                         verify_bytes(&release, &bytes)?;
                         Ok(Event::Downloaded(bytes))
                     }
+                    Task::Prepare(release, path, target) => crate::prepare(&release, &path, target).map(Event::Prepared),
                     Task::Verify(release, path) => {
                         if release.size == 0 || release.size > crate::MAX_INSTALLER_BYTES {
                             return Err("Invalid installer size".into());

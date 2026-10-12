@@ -31,15 +31,23 @@ struct Asset {
     digest: Option<String>,
 }
 
-/// 本机分发架构；其他平台没有 DMG 更新入口。
+/// 本机分发架构，macOS Intel 维持已有资产命名。
 fn architecture() -> Result<&'static str, String> {
-    if !cfg!(target_os = "macos") {
-        return Err("In-app installer updates are available on macOS".into());
-    }
     match std::env::consts::ARCH {
         "aarch64" => Ok("arm64"),
-        "x86_64" => Ok("x86_64"),
+        "x86_64" if cfg!(target_os = "macos") => Ok("x86_64"),
+        "x86_64" => Ok("amd64"),
         _ => Err("No installer is available for this architecture".into()),
+    }
+}
+
+/// 资产名称必须匹配平台和架构，禁止跨平台误装。
+fn asset_name(version: &str, os: &str, arch: &str) -> Result<String, String> {
+    match (os, arch) {
+        ("macos", "arm64" | "x86_64") => Ok(format!("MailFabrica-{version}-{arch}.dmg")),
+        ("windows", "amd64" | "arm64") => Ok(format!("MailFabrica-{version}-windows-{arch}.zip")),
+        ("linux", "amd64" | "arm64") => Ok(format!("MailFabrica-{version}-linux-{arch}.tar.gz")),
+        _ => Err("No update package is available for this platform".into()),
     }
 }
 
@@ -58,7 +66,7 @@ fn agent(timeout: Duration) -> ureq::Agent {
 }
 
 /// 解析版本并选择严格匹配仓库、版本和架构的唯一安装包。
-fn select(metadata: Metadata, current: &str, arch: &str) -> Result<Option<Release>, String> {
+fn select(metadata: Metadata, current: &str, os: &str, arch: &str) -> Result<Option<Release>, String> {
     if metadata.draft || metadata.prerelease {
         return Ok(None);
     }
@@ -71,10 +79,10 @@ fn select(metadata: Metadata, current: &str, arch: &str) -> Result<Option<Releas
     if metadata.html_url != format!("{REPOSITORY}/releases/tag/v{version}") {
         return Err("Unexpected release repository".into());
     }
-    let name = format!("MailFabrica-{version}-{arch}.dmg");
+    let name = asset_name(version, os, arch)?;
     let matches: Vec<_> = metadata.assets.into_iter().filter(|a| a.name == name).collect();
     if matches.len() != 1 {
-        return Err("No matching installer is available for this Mac".into());
+        return Err("No matching update package is available for this platform".into());
     }
     let asset = matches.into_iter().next().ok_or("No matching installer")?;
     if asset.browser_download_url != format!("{REPOSITORY}/releases/download/v{version}/{name}") {
@@ -102,10 +110,6 @@ fn select(metadata: Metadata, current: &str, arch: &str) -> Result<Option<Releas
 }
 
 impl Client for GitHub {
-    /// Windows/Linux 使用 portable 包，显式引导到官方页面，不绕过 macOS 发布者校验。
-    fn manual_url(&self) -> Option<&str> {
-        (!cfg!(target_os = "macos")).then_some("https://github.com/OpenFabrica/mailfabrica/releases/latest")
-    }
     /// 404 表示尚无正式发布；其他网络或元数据错误必须让用户知道，可重试。
     fn check(&self, current: &str) -> Result<Option<Release>, String> {
         let arch = architecture()?;
@@ -125,7 +129,7 @@ impl Client for GitHub {
             return Err("Release metadata is too large".into());
         }
         let metadata = serde_json::from_slice(&bytes).map_err(|_| "Invalid release metadata")?;
-        select(metadata, current, arch)
+        select(metadata, current, std::env::consts::OS, arch)
     }
 
     /// 流式读取有限大小的安装器，每 100ms 上报一次；不输出 CDN 的临时令牌。
@@ -191,15 +195,31 @@ mod tests {
     /// 按 semver 比较，不降级、不把预发布当稳定版、不混用 Intel 安装器。
     #[test]
     fn stable_version_and_native_asset_selection() {
-        assert!(select(fixture("0.10.0"), "0.9.0", "arm64").expect("newer").is_some());
-        assert!(select(fixture("0.1.0"), "0.1.0", "arm64").expect("equal").is_none());
-        assert!(select(fixture("0.1.0"), "0.2.0-dev", "arm64").expect("older").is_none());
-        assert!(select(fixture("0.1.0"), "0.1.0-dev", "arm64").expect("dev").is_some());
-        assert!(select(fixture("0.2.0-rc.1"), "0.1.0", "arm64").expect("rc").is_none());
-        assert!(select(fixture("0.2.0"), "0.1.0", "x86_64").is_err());
+        assert!(select(fixture("0.10.0"), "0.9.0", "macos", "arm64").expect("newer").is_some());
+        assert!(select(fixture("0.1.0"), "0.1.0", "macos", "arm64").expect("equal").is_none());
+        assert!(select(fixture("0.1.0"), "0.2.0-dev", "macos", "arm64").expect("older").is_none());
+        assert!(select(fixture("0.1.0"), "0.1.0-dev", "macos", "arm64").expect("dev").is_some());
+        assert!(select(fixture("0.2.0-rc.1"), "0.1.0", "macos", "arm64").expect("rc").is_none());
+        assert!(select(fixture("0.2.0"), "0.1.0", "macos", "x86_64").is_err());
         let mut draft = fixture("0.2.0");
         draft.draft = true;
-        assert!(select(draft, "0.1.0", "arm64").expect("draft").is_none());
+        assert!(select(draft, "0.1.0", "macos", "arm64").expect("draft").is_none());
+    }
+
+    /// 四个 portable 平台都严格匹配官方资产，缺本机包不得回退到另一种 CPU。
+    #[test]
+    fn portable_assets_match_platform_and_architecture() {
+        for os in ["windows", "linux"] {
+            for arch in ["amd64", "arm64"] {
+                let mut metadata = fixture("0.2.0");
+                let name = asset_name("0.2.0", os, arch).expect("asset");
+                metadata.assets[0].name = name.clone();
+                metadata.assets[0].browser_download_url = format!("{REPOSITORY}/releases/download/v0.2.0/{name}");
+                let release = select(metadata, "0.1.0", os, arch).expect("select").expect("release");
+                assert_eq!(release.asset, name);
+            }
+        }
+        assert!(select(fixture("0.2.0"), "0.1.0", "windows", "arm64").is_err());
     }
 
     /// 元数据缺摘要、文件过大或来源错误时，不能启动安装。
@@ -213,9 +233,9 @@ mod tests {
                 2 => meta.assets[0].browser_download_url = "https://example.com/file.dmg".into(),
                 _ => meta.html_url = "https://github.com/other/repo".into(),
             }
-            assert!(select(meta, "0.1.0", "arm64").is_err());
+            assert!(select(meta, "0.1.0", "macos", "arm64").is_err());
         }
-        let release = select(fixture("0.2.0"), "0.1.0", "arm64").expect("select").expect("release");
+        let release = select(fixture("0.2.0"), "0.1.0", "macos", "arm64").expect("select").expect("release");
         assert!(crate::verify_bytes(&release, b"dmg").is_ok());
         for bytes in [b"bad".as_slice(), b"dm", b"dmgg"] {
             assert!(crate::verify_bytes(&release, bytes).is_err());

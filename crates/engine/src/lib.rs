@@ -287,8 +287,8 @@ pub enum UiRequest {
         servers: bool,
     },
     OpenUrl(String),
-    /// 打开经过完整性和发布者检查的本地安装器。
-    OpenInstaller(PathBuf),
+    /// 应用文件已准备好，正常退出后由辅助进程替换并重启。
+    RestartForUpdate,
 }
 
 /// 演示账户的邮箱和密码（`Session::demo` 用）。

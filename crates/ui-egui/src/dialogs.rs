@@ -176,6 +176,7 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
                 let mut p = Map::new();
                 p.insert("email".into(), json!(email));
                 p.insert("password".into(), json!(d.s("password")));
+                p.insert("provider".into(), json!(d.s("provider")));
                 if !d.s("name").trim().is_empty() {
                     p.insert("name".into(), json!(d.s("name").trim()));
                 }
@@ -206,6 +207,7 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
             p.insert("signature".into(), json!(d.s("signature")));
             if !d.s("password").is_empty() {
                 p.insert("password".into(), json!(d.s("password")));
+                p.insert("provider".into(), json!(d.s("provider")));
             }
             server_params(&d, &mut p);
             app.run("account.update", Json::Object(p))
@@ -305,7 +307,10 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
         "about" => 380.0,
         _ => 480.0,
     };
-    egui::Modal::new(egui::Id::new(("dialog", d.name.clone())))
+    let modal_id = egui::Id::new(("dialog", d.name.clone()));
+    egui::Modal::new(modal_id)
+        // 遮罩不参与 Area 淡入；布局重算或可见性变化时也保持同一透明度。
+        .area(egui::Modal::default_area(modal_id).fade_in(false))
         .frame(egui::Frame::popup(&ctx.global_style()).inner_margin(20).corner_radius(12))
         .show(ctx, |ui| {
             ui.set_width(width);
@@ -441,7 +446,11 @@ fn servers(ui: &mut Ui, d: &mut Dialog, lang: Language) -> bool {
 fn detect(app: &mut MailApp, d: &mut Dialog) {
     let email = d.s("email");
     let domain = email.rsplit_once('@').map(|(_, dom)| dom.trim().to_ascii_lowercase()).unwrap_or_default();
-    if d.servers_touched || !domain.contains('.') || domain == d.detected_for {
+    if mailfabrica_engine::core::provider(&d.s("provider")).is_some_and(|p| p.servers.is_some())
+        || d.servers_touched
+        || !domain.contains('.')
+        || domain == d.detected_for
+    {
         return;
     }
     d.detected_for = domain;
@@ -466,7 +475,10 @@ fn provider_hint(id: &str) -> &'static str {
         "qq" => "QQ Mail needs an authorization code: in QQ Mail on the web, open Settings → Account, enable IMAP/SMTP and generate one.",
         "exmail" => "If secure login is enabled, use a client-specific password instead of the login password.",
         "netease" => "163, 126 and yeah.net need an authorization code: in Settings → POP3/SMTP/IMAP, enable IMAP and generate one.",
-        "qiye163" | "aliqiye" => "Use your enterprise mailbox password. If IMAP is turned off, ask your administrator to enable it.",
+        "qiye163" => {
+            "NetEase Enterprise Mail requires a client authorization password. In webmail, enable IMAP/SMTP in Settings → Account and Security → Client Settings, generate an authorization password and confirm it before copying."
+        }
+        "aliqiye" => "Use your enterprise mailbox password. If IMAP is turned off, ask your administrator to enable it.",
         "gmail" => "Gmail needs an app password: Google Account → Security → 2-Step Verification → App passwords.",
         "icloud" => "iCloud needs an app-specific password, which you can create at account.apple.com.",
         _ => "QQ, 163 and similar providers need an authorization code instead of the login password.",
@@ -490,7 +502,7 @@ fn apply_provider(d: &mut Dialog) {
                 d.values.insert(port_key.into(), json!(cfg.port.to_string()));
                 d.values.insert(sec_key.into(), json!(sec(cfg.security)));
             }
-            d.servers_touched = true;
+            d.servers_touched = false;
         }
         None => {
             for k in ["imapHost", "imapPort", "imapSecurity", "smtpHost", "smtpPort", "smtpSecurity"] {

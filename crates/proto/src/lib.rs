@@ -169,6 +169,15 @@ impl ImapClient {
         if !self.caps_seen {
             self.refresh_caps()?;
         }
+        self.identify()?;
+        Ok(())
+    }
+
+    /// 广告了 ID 能力时发送真实客户端标识；可在认证前调用，不发送账号、密码或设备标识。
+    pub fn identify(&mut self) -> Result<()> {
+        if self.caps.is_empty() {
+            self.refresh_caps()?;
+        }
         if self.has_cap("ID") {
             let id = format!("ID (\"name\" \"MailFabrica\" \"version\" \"{}\" \"vendor\" \"MailFabrica\")", env!("CARGO_PKG_VERSION"));
             match self.exec(&[Part::Text(id)]) {

@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]
-version = "0.1.2-dev"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
@@ -34,6 +34,9 @@ tempfile = "3"
 semver = "1"
 sha2 = "0.10"
 tiny-skia = "0.12"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
 
 # mail
 # aws-lc-rs 后端 + prefer-post-quantum：首次握手就带 X25519MLKEM768 密钥。有的邮件服务器只接受这个组，

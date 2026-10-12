@@ -75,6 +75,8 @@ pub struct Layout {
 
 /// 整个邮件客户端界面。
 pub struct MailApp {
+    /// 安装准备完成后在宿主正常退出路径中交接更新。
+    restart_for_update: bool,
     pub session: Session,
     pub ui: UiState,
     pub services: Services,
@@ -115,6 +117,7 @@ impl MailApp {
     pub fn new(session: Session, services: Services) -> MailApp {
         let seen_query = session.view().query.clone();
         MailApp {
+            restart_for_update: false,
             session,
             ui: UiState::default(),
             services,
@@ -341,13 +344,7 @@ impl MailApp {
                 }
                 UiRequest::CloseCompose(id) => self.composer.forget(id),
                 UiRequest::OpenUrl(u) => self.open_url(&u),
-                UiRequest::OpenInstaller(path) => {
-                    if let Some(open) = &self.services.open_url {
-                        open(&path.to_string_lossy());
-                    } else {
-                        self.message = Some(format!("{}: {}", self.lang().t("Installer saved"), path.display()));
-                    }
-                }
+                UiRequest::RestartForUpdate => self.restart_for_update = true,
                 UiRequest::AccountAdded(id) => dialogs::account_add_result(self, &id, None),
                 UiRequest::AccountAddFailed { id, message, servers } => dialogs::account_add_result(self, &id, Some((message, servers))),
             }
@@ -383,6 +380,11 @@ impl MailApp {
             ctx.request_repaint();
         }
         self.after_engine();
+        if self.restart_for_update {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.request_repaint();
+        }
         control::poll(self, ctx);
         // 忙时刷新快一点看进度；空闲时也定期醒来，让引擎做自动收取
         let ms = if self.session.status().busy || self.session.update().busy() { 250 } else { 3000 };
@@ -453,6 +455,20 @@ impl MailApp {
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
         self.flush_actions();
+        // 本帧输入和延迟命令可能刚刚创建了未保存写信，必须在处理完后再决定退出。
+        if self.restart_for_update && self.session.update().phase != mailfabrica_engine::UpdatePhase::Installing {
+            self.restart_for_update = false;
+        }
+        if self.restart_for_update {
+            if self.session.composes().iter().any(|c| c.dirty) {
+                let _ = self.run("update.cancel", json!({}));
+                self.restart_for_update = false;
+                self.message = Some(self.lang().t("Save or close unsaved messages before updating").into());
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
         control::issue_screenshots(self, &ctx);
         control::collect_screenshots(self, &ctx);
     }
@@ -585,6 +601,34 @@ pub fn now_ms() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 弹窗重绘时背景遮罩应保持固定透明度，包括后台唤醒与布局变化。
+    #[test]
+    fn update_modal_backdrop_stays_opaque_across_repaints() {
+        let ctx = egui::Context::default();
+        let mut app = MailApp::new(Session::demo().expect("demo"), Services::default());
+        MailApp::setup_context(&ctx, false);
+        app.fonts_ready = true;
+        app.open_dialog("updates", json!({}));
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+        for (index, time) in [0.0, 0.016, 0.032, 3.4, 6.4, 9.4].into_iter().enumerate() {
+            let input = egui::RawInput { screen_rect: Some(rect), time: Some(time), ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+            output.textures_delta.clear();
+            let alphas: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::epaint::Shape::Rect(r) if r.rect == rect && r.fill.r() == 0 && r.fill.g() == 0 && r.fill.b() == 0 => Some(r.fill.a()),
+                    _ => None,
+                })
+                .collect();
+            // 首次面积测量不画内容，从下一帧起必须只有一个稳定的遮罩。
+            if index > 0 {
+                assert_eq!(alphas, vec![100], "frame {index} at {time}s");
+            }
+        }
+    }
 
     #[test]
     fn shortcuts_parse() {

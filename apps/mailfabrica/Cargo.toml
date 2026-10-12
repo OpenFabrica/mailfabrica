@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 mailfabrica-brand = { workspace = true }
 mailfabrica-engine = { workspace = true }
+mailfabrica-update = { workspace = true }
 mailfabrica-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 egui = { workspace = true }

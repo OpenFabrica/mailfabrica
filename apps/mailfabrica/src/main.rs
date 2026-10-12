@@ -25,6 +25,8 @@ struct App {
     app: MailApp,
     /// `ui.json` 所在目录；None = 不保存（演示模式或禁用）。
     prefs_dir: Option<PathBuf>,
+    /// 新程序首帧完成后通知辅助进程，防止启动失败被误报成功。
+    update_ack: Option<PathBuf>,
 }
 
 impl eframe::App for App {
@@ -38,9 +40,18 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if self.app.layout.toolbar.is_some()
+            && let Some(stage) = self.update_ack.take()
+            && let Err(error) = mailfabrica_update::acknowledge(&stage)
+        {
+            log::warn!("update confirmation: {error}");
+        }
     }
 
     fn on_exit(&mut self) {
+        if let Err(error) = self.app.session.commit_update() {
+            log::error!("update handoff: {error}");
+        }
         if let Some(dir) = &self.prefs_dir {
             save_ui_state(&self.app, dir);
         }
@@ -54,6 +65,9 @@ struct Args {
     control: Option<u16>,
     data: Option<PathBuf>,
     version: bool,
+    helper: Option<PathBuf>,
+    update_ack: Option<PathBuf>,
+    update_error: Option<String>,
 }
 
 /// 解析命令行（不认识的参数忽略，例如 macOS 的 `-psn_…`）。
@@ -62,6 +76,9 @@ fn parse_args(args: &[String]) -> Args {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--apply-update" => a.helper = it.next().map(PathBuf::from),
+            "--update-ack" => a.update_ack = it.next().map(PathBuf::from),
+            "--update-error" => a.update_error = it.next().cloned(),
             "--demo" => a.demo = true,
             "--control" => a.control = it.next().and_then(|p| p.parse().ok()),
             "--data" => a.data = it.next().map(PathBuf::from),
@@ -147,17 +164,40 @@ fn open_session(args: &Args) -> Result<(Session, Option<PathBuf>), String> {
 fn main() -> eframe::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let args = parse_args(&argv);
+    if let Some(stage) = &args.helper {
+        if let Err(error) = mailfabrica_update::run_helper(stage) {
+            eprintln!("MailFabrica update: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if args.version {
         println!("MailFabrica {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    let (session, root) = match open_session(&args) {
+    let (mut session, root) = match open_session(&args) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("MailFabrica: {e}");
             std::process::exit(1);
         }
     };
+    if let Ok(executable) = std::env::current_exe().and_then(std::fs::canonicalize) {
+        let mut restart_args = Vec::new();
+        if args.demo {
+            restart_args.push("--demo".into());
+        }
+        if let Some(port) = args.control {
+            restart_args.extend(["--control".into(), port.to_string()]);
+        }
+        if let Some(data) = &root {
+            restart_args.extend(["--data".into(), std::fs::canonicalize(data).unwrap_or_else(|_| data.clone()).to_string_lossy().into_owned()]);
+        }
+        session.configure_update_target(mailfabrica_update::InstallTarget { executable, args: restart_args, data: root.clone() });
+    }
+    if let Some(error) = &args.update_error {
+        session.ui_requests.push(mailfabrica_engine::UiRequest::Message(error.clone()));
+    }
     let prefs_dir = root.filter(|_| std::env::var_os("MAILFABRICA_NO_PREFS").is_none());
     let mut app = MailApp::new(session, services());
     if let Some(dir) = &prefs_dir {
@@ -183,7 +223,7 @@ fn main() -> eframe::Result<()> {
                     Err(e) => eprintln!("control channel on port {port}: {e}"),
                 }
             }
-            Ok(Box::new(App { app, prefs_dir }))
+            Ok(Box::new(App { app, prefs_dir, update_ack: args.update_ack }))
         }),
     )
 }

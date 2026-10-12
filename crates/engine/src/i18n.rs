@@ -21,6 +21,11 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("accountSaveFailed", "保存账户 {0} 失败：{1}", "Could not save the account {0}: {1}"),
     ("passwordSaveFailed", "保存密码失败：{0}", "Could not save the password: {0}"),
     (
+        "hintNetEaseEnterprise",
+        "登录 {0} 失败：{1}\n\n网易企业邮箱需要客户端授权密码，而不是网页登录密码。请在网页邮箱的“设置 → 账号与安全 → 客户端设置”中开启 IMAP/SMTP，生成授权密码并确认生效，然后使用完整企业邮箱地址和授权密码重试。若错误包含 IPDENY，请联系管理员检查客户端访问或 IP 限制。",
+        "Could not sign in to {0}: {1}\n\nNetEase Enterprise Mail requires a client authorization password, not the web login password. Enable IMAP/SMTP in webmail Settings → Account and Security → Client Settings, generate and confirm an authorization password, then retry with the full email address. For IPDENY, ask the administrator to check client access and IP restrictions.",
+    ),
+    (
         "hintAuthCode",
         "登录 {0} 失败：{1}\n\n{2} 邮箱需要使用授权码登录，而不是网页登录密码。请在网页邮箱的“设置 → 账户”里开启 IMAP/SMTP 服务并生成授权码，再用授权码添加账户。",
         "Could not sign in to {0}: {1}\n\n{2} requires an authorization code instead of your web login password. Turn on IMAP/SMTP in the web mailbox settings (Settings → Account), generate an authorization code and add the account with it.",

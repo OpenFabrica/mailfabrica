@@ -4,7 +4,7 @@
 //! 参数里的邮件键用字符串形式 `账户/uid/文件夹`（见 `MsgKey`）。`keys` 省略时作用于当前选中的邮件。
 //!
 //! 完整命令表（id — 参数 — 说明）：
-//! - `account.add` — `{email, password, name?, login?, imapHost?, imapPort?, imapSecurity?, smtpHost?, smtpPort?, smtpSecurity?, verify?}`
+//! - `account.add` — `{email, password, provider?, name?, login?, imapHost?, imapPort?, imapSecurity?, smtpHost?, smtpPort?, smtpSecurity?, verify?}`
 //!   — 空参数时请求 `accountAdd` 对话框。`verify`（默认 true）先登录验证。成功后自动收取。返回 `{id}`。
 //! - `account.update` — `{id, name?, login?, password?, signature?, imapHost?, …}`；空参数打开 `accountEdit` 对话框。
 //! - `account.remove` — `{id}`，删除账户、密码和本地数据。

@@ -2,54 +2,62 @@
 
 ## 背景与边界
 
-公开分发的 macOS 客户端需要找到正式版、下载正确架构的安装包并打开安装器。用户自行拖入 Applications，退出并重新启动应用；更新流程不替换正在运行的程序，不修改邮件账户或钥匙串。首次启动不隐式联网检查更新。
+应用从固定 `OpenFabrica/mailfabrica` GitHub 发布源检查正式版，下载本机资产，校验后自动替换并重启。macOS 更新整个 `.app`；Windows/Linux portable 更新已安装的应用文件。邮件、账户、钥匙串和不属于应用的文件不进入替换计划。首次启动不自动检查。
 
-新增 `crates/update`（L3）集中封装 GitHub 网络、完整性校验与系统签名验证，避免这些基础设施进入 UI 或邮件同步线程。它不依赖 Store、sync 或 egui。引擎仍是唯一状态和存储入口，界面、CLI、MCP 使用同一组命令。
+`crates/update`（L3）封装网络、完整性、Apple 发布者校验、解压、安装准备和辅助进程事务；不依赖 egui、Store 或邮件同步。引擎持有更新状态；宿主注入当前可执行文件、启动参数及数据目录，公开命令不能指定路径或下载来源。
 
-## 概念与规则
+## 规则
 
-- Release：固定 `OpenFabrica/mailfabrica` 仓库的最新非草稿、非预发布版本。用 semver 比较，只有比运行版本更新才提供下载。
-- Installer：严格匹配 `MailFabrica-<version>-arm64.dmg` 或 `x86_64.dmg` 的资产，下载地址必须匹配该仓库与版本；没有本机架构资产时报告错误。
-- 完整性：GitHub API 的 `sha256:` digest 和资产长度都必须匹配；安装包最多 128 MiB，元数据最多 2 MiB。
-- 发布者：macOS `codesign --verify --strict`、证书 TeamIdentifier `HQ537XMLJY` 和 Gatekeeper assessment 都通过才允许打开。重新打开缓存前再次验证，防止缓存被修改。
-- 任务：每个会话只允许一个更新任务；任务号过滤迟到结果。所有失败清除忙碌状态，保留可用发布信息以便重试。
-- 超时：发布检查 20 秒，下载 180 秒，连接 10 秒，每条系统验证命令 60 秒。关闭会话取消后续下载读取并丢弃结果，不再自动打开安装器。
+- 仅接受比当前版本更新的稳定版；草稿、预发布、缺本机资产或缺 SHA-256 digest 都不能安装。macOS arm64/Intel 使用 DMG，Windows amd64/arm64 使用 ZIP，Linux amd64/arm64 使用 TAR.GZ。
+- 安装包长度及 SHA-256 必须与 GitHub 元数据匹配，最大 128 MiB。安装准备使用私有副本，避免缓存变化影响解压。
+- macOS 验证 DMG 和应用的完整签名、TeamIdentifier `HQ537XMLJY` 与 Gatekeeper 公证信任。Windows/Linux 尚无独立发布者签名，信任依赖固定官方 HTTPS 来源及 API digest；归档内 `build.json` 的版本、平台、CPU 和二进制哈希必须一致。
+- Portable 只解压已知叶子文件，拒绝路径穿越、重复条目、链接、设备节点；最多 32 个归档条目，解压最多 256 MiB。程序启动版本必须匹配发布版本。
+- 安装目录必须可写。macOS 拒绝从 `/Volumes` 更新；邮件数据不能位于 `.app` 内。准备目录位于应用旁的同盘私有目录，权限由 tempfile 限制。开发 `target` 目录不执行安装。
+- 写信未保存时禁止更新；下载和准备期间再次检查，防止中途输入丢失。邮件同步不属于更新任务，退出前已写入的本地数据继续保留。
+- 每个会话至多一个更新任务；迟到事件按任务号丢弃。关闭弹窗不取消更新，关闭会话则停止接收未交接的任务。
+- 辅助进程来自已验证的新应用。父进程持有文件锁；只有正常退出提交 `commit` 后才能替换。异常关闭、取消、锁等待 60 秒超时均不替换。
+- 替换前再次验证旧文件哈希及新文件；按项备份和 rename。任何一步失败回退。新 GUI 必须在 30 秒内完成首帧确认，否则收割失败进程、恢复旧版并重启显示错误。无法恢复时保留备份路径。成功后清理临时安装文件。
 
 ## 流程
 
 ```mermaid
 flowchart TD
-    A[update.check] --> B[后台检查最新正式版]
-    B --> C{版本较新且本机资产有效?}
-    C -->|否| D[Current 或 Failed]
-    C -->|是| E[Available]
-    E --> F[update.download]
-    F --> G[后台下载并校验长度与 SHA-256]
-    G --> H[引擎原子保存 updates/安装包]
-    H --> I[后台重新读取并校验哈希、签名、发布者与 Gatekeeper]
-    I -->|通过| J[Ready + OpenInstaller 请求]
-    I -->|失败| K[Failed，可重新下载]
-    J --> L[系统打开 DMG，用户拖入 Applications]
-    J --> M[update.open 再验证后打开]
+    A[update.check] --> B{有较新的本机正式版?}
+    B -->|否| C[Current 或 Failed]
+    B -->|是| D[Available]
+    D --> E[update.download]
+    E --> F[下载并校验长度与 SHA-256]
+    F --> G[引擎原子保存安装包]
+    G --> H[后台校验发布者并准备同盘新文件]
+    H -->|失败| I[Failed 旧应用继续运行]
+    H -->|成功| J[Installing 请求正常退出]
+    J --> K[保存偏好并提交交接]
+    K --> L[辅助进程等待父锁释放]
+    L --> M[验证旧文件 备份并替换]
+    M --> N[按原启动参数重启]
+    N -->|首帧确认| O[清理准备目录]
+    M -->|失败| P[恢复旧版本并报告错误]
+    N -->|未启动| P
 ```
 
-`update` 线程不写磁盘；引擎用 `Store::save_installer` 保存文件。验证线程只读取已保存安装器并调用固定系统工具，不访问邮件存储。失败文件没有可打开的状态；重新下载原子覆盖，临时文件保存失败时清理。
-
-## 命令与状态
+## 命令与宿主
 
 | 命令 | 参数 | 行为 |
 |---|---|---|
-| `update.check` | `{}` | 启动检查；忙碌时禁用 |
-| `update.download` | `{}` | 下载检查出的更新；验证成功后请求打开安装器 |
-| `update.open` | `{}` | 重新验证并打开已下载的安装器 |
-| `update.status` | `{}` | 查询 phase、release、received、installer 和 error |
+| `update.check` | `{}` | 检查；忙碌时禁用 |
+| `update.download` | `{}` | 下载、验证、自动准备及安装重启 |
+| `update.open` | `{}` | 保留原命令 ID，重新验证已下载包后安装 |
+| `update.cancel` | `{}` | 取消准备阶段，旧应用继续运行 |
+| `update.status` | `{}` | 查询阶段、版本、字节数、缓存路径和错误 |
 
-阶段：`idle`、`checking`、`current`、`available`、`downloading`、`verifying`、`ready`、`failed`、`manual`。`current` 包括尚无正式发布和没有更新版本。`app.status.busy` 包括更新任务，并附带 `update` 状态。
+阶段包括 `idle`、`checking`、`current`、`available`、`downloading`、`verifying`、`installing`、`ready`、`failed`、`cancelled`。`manual` 保留给自定义发布客户端，固定 GitHub 客户端不再走此分支。`app.status.busy` 包括更新。
 
-GUI 执行异步命令，轮询 `update.status`；无窗口 CLI/MCP 会等待到空闲或原有 120 秒上限，返回当时状态，不启动系统安装器。超过等待上限时可继续查询状态，`ready.installer` 给出本地路径。连接 GUI 的控制通道/MCP 会由 GUI 打开安装器。任何命令都不接受外部 URL、版本或任意本地路径。
+GUI 宿主配置安装目标，收到 `RestartForUpdate` 后正常退出并在退出回调提交。启动参数中的 `--demo`、`--data`、控制端口会保留。控制通道或连接 GUI 的 MCP 使用同一更新命令。独立无窗口 CLI/MCP 未配置安装目标时止于 `ready`，返回验证过的包路径；不会误替换 CLI 或另一份 GUI。
 
-Windows/Linux 的正式产物为 portable 归档；`Client::manual_url` 返回固定官方页面，工作线程产生 `Manual` 事件，引擎返回 `manualUrl` 并请求打开页面。此分支不下载任意文件，也不绕过 Apple 发布者检查；无窗口调用只返回页面 URL。
+0.1.0/0.1.1 内置的旧更新代码仍会打开安装器，它们不能在未安装新版代码前自动获得此能力。自动替换从含此实现的版本开始生效；已有发布标签和资产保持不变。
 
 ## 验证
 
-`cargo xtask ci` 覆盖版本排序、本机资产选择、缺摘要、过大文件、截断/哈希损坏、错误发布者、重复任务、失败重试、迟到事件、缓存篡改和完整命令链。真实界面检查就地忙碌状态、更新按钮与关闭行为；公开发布后从真实 GitHub 资产验证下载及 Apple 签名。
+`cargo xtask ci` 覆盖平台资产、完整性、安全解压、部分替换失败恢复、父锁与提交、未保存写信门禁、缓存篡改和命令链。`cargo xtask update-qa <package> <version> <qa-executable> <port>` 仅允许系统临时目录内带 `mailfabrica-update-qa-` 标识的安装，验证真实辅助进程、GUI 重启和用户文件保留。四个 native CI job 在归档截图验收后执行此流程；macOS 对最终公证包另行执行。
+
+更新弹窗关闭 Area 淡入；更新说明固定换行与滚动区域大小，避免遮罩透明度随可见性和布局变化。逐帧测试检查只有一个 alpha=100 的全窗遮罩；截图序列检查实际渲染。

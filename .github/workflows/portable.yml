@@ -80,6 +80,7 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}-v1
+          restore-keys: rust-${{ runner.os }}-${{ matrix.arch }}-
       - name: CI and native package
         shell: bash
         run: |

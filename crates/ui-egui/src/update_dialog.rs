@@ -18,7 +18,9 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui) {
         UpdatePhase::Available => lang.t("Release notes"),
         UpdatePhase::Downloading => lang.t("Downloading installer…"),
         UpdatePhase::Verifying => lang.t("Verifying installer…"),
-        UpdatePhase::Ready => lang.t("The installer is ready. Drag MailFabrica into Applications, then quit and reopen the app."),
+        UpdatePhase::Installing => lang.t("Preparing the update. MailFabrica will restart automatically…"),
+        UpdatePhase::Ready => lang.t("The update is verified and ready to install."),
+        UpdatePhase::Cancelled => lang.t("Update cancelled. The current application was not replaced."),
         UpdatePhase::Failed => lang.t("Could not complete the update. Check your network and retry."),
     };
     ui.horizontal_wrapped(|ui| {
@@ -39,9 +41,14 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui) {
             ui.label(format!("{:.1} / {:.1} MB", state.received as f64 / 1_048_576.0, release.size as f64 / 1_048_576.0));
         }
         if !release.notes.is_empty() {
-            egui::ScrollArea::vertical().id_salt("update_notes").max_height(160.0).show(ui, |ui| {
-                ui.label(&release.notes);
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("update_notes")
+                .max_height(160.0)
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                .show(ui, |ui| {
+                    ui.add(egui::Label::new(&release.notes).wrap());
+                });
         }
         if ui.link(lang.t("View release")).clicked() {
             app.open_url(&release.page);
@@ -59,15 +66,21 @@ pub(crate) fn show(app: &mut MailApp, ui: &mut Ui) {
         if check.clicked() {
             app.defer("update.check", json!({}));
         }
-        if state.release.is_some() && matches!(state.phase, UpdatePhase::Available | UpdatePhase::Failed) {
-            let download = widgets::accent_button(ui, lang.t("Download and Open Installer"), true);
+        if state.release.is_some()
+            && state.installer.is_none()
+            && matches!(state.phase, UpdatePhase::Available | UpdatePhase::Failed | UpdatePhase::Cancelled)
+        {
+            let download = widgets::accent_button(ui, lang.t("Download and Install Update"), true);
             app.target("update.download", download.rect);
             if download.clicked() {
                 app.defer("update.download", json!({}));
             }
         }
-        if state.phase == UpdatePhase::Ready {
-            let open = widgets::accent_button(ui, lang.t("Open Installer"), true);
+        if state.phase == UpdatePhase::Installing && ui.button(lang.t("Cancel Update")).clicked() {
+            app.defer("update.cancel", json!({}));
+        }
+        if matches!(state.phase, UpdatePhase::Ready | UpdatePhase::Cancelled) && state.installer.is_some() {
+            let open = widgets::accent_button(ui, lang.t("Install Update"), true);
             app.target("update.open", open.rect);
             if open.clicked() {
                 app.defer("update.open", json!({}));

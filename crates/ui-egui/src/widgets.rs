@@ -189,7 +189,7 @@ pub fn message_box(app: &mut MailApp, ctx: &egui::Context) {
     let lang = app.lang();
     let t = Tokens::get(ctx);
     let mut close = false;
-    egui::Modal::new(egui::Id::new("message_box")).show(ctx, |ui| {
+    egui::Modal::new(egui::Id::new("message_box")).area(egui::Modal::default_area(egui::Id::new("message_box")).fade_in(false)).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());

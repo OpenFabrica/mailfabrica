@@ -79,7 +79,7 @@ fn commands_download_verify_open_and_revalidate() {
     assert_eq!(s.update().received, 3);
     let path = s.update().installer.clone().expect("path");
     assert_eq!(std::fs::read(&path).expect("cached"), b"dmg");
-    assert_eq!(s.take_ui_requests(), vec![UiRequest::OpenInstaller(path.clone())]);
+    assert!(s.take_ui_requests().is_empty());
     assert_eq!(s.run("update.status", json!({})).expect("query")["phase"], "ready");
     std::fs::write(&path, b"bad").expect("tamper");
     s.run("update.open", json!({})).expect("reverify");
@@ -113,7 +113,7 @@ fn failures_never_open_and_download_can_retry() {
     s.run("update.download", json!({})).expect("retry trusted");
     s.wait_idle(Duration::from_secs(2));
     assert_eq!(s.update().phase, UpdatePhase::Ready);
-    assert_eq!(s.take_ui_requests().len(), 1);
+    assert!(s.take_ui_requests().is_empty());
 }
 
 /// 无发布/已最新与网络失败分开显示；旧任务的迟到结果不能覆盖新任务。
@@ -167,4 +167,29 @@ fn manual_platform_update_returns_page_and_disables_download() {
     assert_eq!(s.take_ui_requests(), vec![UiRequest::OpenUrl("https://github.com/OpenFabrica/mailfabrica/releases/latest".into())]);
     assert!(s.run("update.download", json!({})).is_err());
     assert_eq!(s.run("update.status", json!({})).expect("status")["manualUrl"], "https://github.com/OpenFabrica/mailfabrica/releases/latest");
+}
+
+/// 写信尚未保存时，更新不能触发退出；下载期间又写信也必须保留内容。
+#[test]
+fn update_preserves_unsaved_composes() {
+    let mut s = session(source(true));
+    s.run("update.check", json!({})).expect("check");
+    s.wait_idle(Duration::from_secs(2));
+    s.composes.push(crate::Compose { id: 99, dirty: true, ..Default::default() });
+    assert!(s.run("update.download", json!({})).is_err());
+    assert!(s.take_ui_requests().iter().all(|r| *r != UiRequest::RestartForUpdate));
+}
+
+/// 取消准备立即解除忙碌并使旧任务失效，不允许迟到结果再次发起退出。
+#[test]
+fn cancelling_preparation_invalidates_the_active_task() {
+    let mut s = session(source(true));
+    s.updates.state.phase = UpdatePhase::Installing;
+    s.updates.active = Some(42);
+    s.run("update.cancel", json!({})).expect("cancel");
+    assert_eq!(s.update().phase, UpdatePhase::Cancelled);
+    assert!(!s.update().busy());
+    assert!(s.updates.active.is_none() && s.updates.handoff.is_none());
+    assert!(s.take_ui_requests().is_empty());
+    assert!(s.run("update.cancel", json!({})).is_err());
 }
