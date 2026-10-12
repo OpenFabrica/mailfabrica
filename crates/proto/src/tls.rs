@@ -8,7 +8,7 @@ use mailfabrica_core::{MailError, Result, Security, ServerConfig};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
-use crate::{Stream, TIMEOUT};
+use crate::{Stream, TIMEOUT, at_stage};
 
 /// 握手最多推进的轮数，防止异常服务器让循环停不下来。
 const MAX_HANDSHAKE_ROUNDS: usize = 64;
@@ -20,7 +20,7 @@ pub(crate) fn connect(cfg: &ServerConfig, timeout: Duration) -> Result<Box<dyn S
     }
     // 超时为 0 时 std 会报错，退回默认值。
     let timeout = if timeout.is_zero() { TIMEOUT } else { timeout };
-    let addrs = (cfg.host.trim(), cfg.port).to_socket_addrs().map_err(|e| MailError::Net(format!("cannot resolve {}: {e}", cfg.host)))?;
+    let addrs = (cfg.host.trim(), cfg.port).to_socket_addrs().map_err(|e| MailError::Net(format!("DNS {}: {e}", cfg.host)))?;
     let mut last = MailError::Net(format!("no address for {}", cfg.host));
     let mut tcp = None;
     for addr in addrs {
@@ -29,7 +29,7 @@ pub(crate) fn connect(cfg: &ServerConfig, timeout: Duration) -> Result<Box<dyn S
                 tcp = Some(s);
                 break;
             }
-            Err(e) => last = MailError::Net(format!("connect {addr}: {e}")),
+            Err(e) => last = MailError::Net(format!("TCP connect {addr}: {e}")),
         }
     }
     let tcp = tcp.ok_or(last)?;
@@ -38,7 +38,7 @@ pub(crate) fn connect(cfg: &ServerConfig, timeout: Duration) -> Result<Box<dyn S
     let _ = tcp.set_nodelay(true);
     let stream: Box<dyn Stream> = Box::new(tcp);
     match cfg.security {
-        Security::Tls => upgrade_tls(stream, cfg.host.trim()),
+        Security::Tls => upgrade_tls(stream, cfg.host.trim()).map_err(|e| at_stage(e, "TLS handshake")),
         Security::StartTls | Security::None => Ok(stream),
     }
 }

@@ -132,7 +132,7 @@ fn auth_failure_and_offline() {
 }
 
 /// 自动找服务器：猜的 imap./smtp. 主机不存在时换 mail.<域名>，并把找到的服务器报回去；
-/// 密码错时不再往下试；全都连不上时报第一个的错误。
+/// 密码错时不再往下试；全都连不上时保留每个候选的失败原因。
 #[test]
 fn detect_falls_back_to_the_next_candidate() {
     let fake = FakeConnector::empty("pw");
@@ -160,7 +160,7 @@ fn detect_falls_back_to_the_next_candidate() {
     fake.set_offline(true);
     w.submit(job(detect));
     assert!(
-        matches!(dones(&w.wait_idle(WAIT)).as_slice(), [("detect", Err(MailError::Net(m)))] if m.contains("also tried mail.example.com:993, example.com:993"))
+        matches!(dones(&w.wait_idle(WAIT)).as_slice(), [("detect", Err(MailError::Net(m)))] if m.contains("also tried mail.example.com:993, example.com:993") && m.contains("attempts:") && m.contains("imap.example.com:993:") && m.contains("mail.example.com:993:") && m.contains("example.com:993:"))
     );
 }
 

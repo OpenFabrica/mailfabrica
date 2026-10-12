@@ -20,6 +20,8 @@ enum Step {
     Expect(String),
     /// 客户端应发来正好这些字节。
     ExpectBytes(Vec<u8>),
+    /// 客户端应直接关闭，不能在认证拒绝后再发密码。
+    ExpectEof,
 }
 
 /// 服务器发送。
@@ -50,6 +52,13 @@ fn fake_server(steps: Vec<Step>) -> (SocketAddr, JoinHandle<Result<(), String>>)
                     let got = line.trim_end_matches(['\r', '\n']);
                     if got != want {
                         return Err(format!("step {i}: expected {want:?}, got {got:?}"));
+                    }
+                }
+                Step::ExpectEof => {
+                    let mut byte = [0];
+                    let n = r.read(&mut byte).map_err(|e| format!("step {i}: expected EOF: {e}"))?;
+                    if n != 0 {
+                        return Err(format!("step {i}: expected EOF, client sent another command"));
                     }
                 }
                 Step::ExpectBytes(want) => {
@@ -322,11 +331,11 @@ fn imap_login_failure_is_auth_error() {
 }
 
 #[test]
-fn imap_login_falls_back_to_authenticate_plain() {
+fn imap_unsupported_login_falls_back_to_authenticate_plain() {
     let steps = vec![
         s("* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n"),
         c("A0001 LOGIN \"user\" \"pass\""),
-        s("A0001 NO use SASL\r\n"),
+        s("A0001 BAD LOGIN unsupported; use SASL\r\n"),
         c("A0002 AUTHENTICATE PLAIN"),
         s("+ \r\n"),
         c("AHVzZXIAcGFzcw=="),
@@ -801,4 +810,103 @@ fn live_imap_login_list_select() {
         println!("SMTP host {smtp_host} set; sending is not exercised by this test");
     }
     cl.logout();
+}
+
+/// 断线必须保留失败命令，且错误不能带出认证参数。
+#[test]
+fn imap_login_disconnect_names_stage_without_credentials() {
+    let (addr, h) = fake_server(vec![s("* OK [CAPABILITY IMAP4rev1] ready\r\n"), c("A0001 LOGIN \"private-user\" \"private-password\"")]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.login("private-user", "private-password").unwrap_err();
+    assert!(matches!(&error, MailError::Net(m) if m.contains("LOGIN") && m.contains("connection closed by server")), "{error}");
+    assert!(!error.to_string().contains("private-user") && !error.to_string().contains("private-password"));
+    finish(h);
+}
+
+/// LOGIN 成功后的 ID 断线不能误报为密码验证失败。
+#[test]
+fn imap_post_login_disconnect_names_stage() {
+    let (addr, h) = fake_server(vec![
+        s("* OK [CAPABILITY IMAP4rev1 ID] ready\r\n"),
+        c("A0001 LOGIN \"user\" \"pass\""),
+        s("A0001 OK [CAPABILITY IMAP4rev1 ID] authenticated\r\n"),
+        c(&id_line("A0002")),
+    ]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.login("user", "pass").unwrap_err();
+    assert!(matches!(&error, MailError::Net(m) if m.contains("post-login") && m.contains("ID")), "{error}");
+    finish(h);
+}
+
+/// 真实网易问候语没有能力列表，认证前能力查询断线时必须指出 CAPABILITY。
+#[test]
+fn imap_pre_auth_capability_disconnect_names_stage() {
+    let (addr, h) = fake_server(vec![s("* OK IMAP4 ready\r\n"), c("A0001 CAPABILITY")]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.identify().unwrap_err();
+    assert!(matches!(error, MailError::Net(ref m) if m.contains("CAPABILITY")), "{error}");
+    finish(h);
+}
+
+/// SASL 的继续请求断线应保留认证方法，并保持网络错误分类以便备用服务器重试。
+#[test]
+fn imap_plain_disconnect_names_stage() {
+    let (addr, h) = fake_server(vec![s("* OK [CAPABILITY IMAP4rev1 LOGINDISABLED AUTH=PLAIN] ready\r\n"), c("A0001 AUTHENTICATE PLAIN")]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.login("private-user", "private-password").unwrap_err();
+    assert!(matches!(&error, MailError::Net(m) if m.contains("AUTHENTICATE PLAIN")), "{error}");
+    assert!(!error.to_string().contains("private-user") && !error.to_string().contains("private-password"));
+    finish(h);
+}
+
+/// 网易 LOGIN 已拒绝时必须保留拒绝原因，不能再做 SASL 后被 EOF 覆盖。
+#[test]
+fn imap_login_rejection_does_not_retry_plain_or_hide_reason() {
+    for reason in ["ERR.LOGIN.PASSERR", "[AUTHENTICATIONFAILED] Invalid credentials", "ERR.LOGIN.IPDENY"] {
+        let (addr, h) = fake_server(vec![
+            s("* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n"),
+            c("A0001 LOGIN \"user\" \"pass\""),
+            s(&format!("A0001 NO {reason}\r\n")),
+            Step::ExpectEof,
+        ]);
+        let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+        let error = client.login("user", "pass").unwrap_err();
+        drop(client);
+        assert_eq!(error, MailError::Auth(reason.into()));
+        finish(h);
+    }
+}
+
+/// 同步字面量尚未发出密码时收到 LOGIN NO，也不能转换成另一次认证。
+#[test]
+fn imap_login_literal_rejection_does_not_retry_plain() {
+    let (addr, h) = fake_server(vec![
+        s("* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n"),
+        c("A0001 LOGIN \"user\" {6}"),
+        s("A0001 NO ERR.LOGIN.IPDENY\r\n"),
+        Step::ExpectEof,
+    ]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.login("user", "密码").unwrap_err();
+    drop(client);
+    assert_eq!(error, MailError::Auth("ERR.LOGIN.IPDENY".into()));
+    finish(h);
+}
+
+/// LOGIN 确实不支持且 SASL 又断线时，两次失败都保留，便于区分认证拒绝与协议不兼容。
+#[test]
+fn imap_bad_login_then_plain_disconnect_keeps_first_response() {
+    let (addr, h) = fake_server(vec![
+        s("* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN] ready\r\n"),
+        c("A0001 LOGIN \"user\" \"pass\""),
+        s("A0001 BAD unsupported LOGIN\r\n"),
+        c("A0002 AUTHENTICATE PLAIN"),
+    ]);
+    let mut client = ImapClient::from_stream(dial(addr)).unwrap();
+    let error = client.login("user", "pass").unwrap_err();
+    assert!(
+        matches!(error, MailError::Net(ref m) if m.contains("unsupported LOGIN") && m.contains("AUTHENTICATE PLAIN") && m.contains("connection closed by server")),
+        "{error}"
+    );
+    finish(h);
 }

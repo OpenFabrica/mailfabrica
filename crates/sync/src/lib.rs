@@ -418,6 +418,7 @@ fn detect(
     let mut trial = job.clone();
     let imaps = if imaps.is_empty() { std::slice::from_ref(&job.account.imap) } else { imaps };
     let mut first_err = None;
+    let mut failures = Vec::new();
     let mut imap_ok = None;
     for cand in imaps.iter().take(MAX_CANDIDATES) {
         trial.account.imap = cand.clone();
@@ -430,6 +431,7 @@ fn detect(
             }
             Err(e) if transient(&e) => {
                 log::info!("detect {}: imap {}:{} unreachable: {e}", job.account.id, cand.host, cand.port);
+                failures.push(format!("{}:{}: {}", cand.host, cand.port, net_detail(&e)));
                 first_err.get_or_insert(e);
             }
             Err(e) => return Err(e),
@@ -439,7 +441,9 @@ fn detect(
     let Some(imap) = imap_ok else {
         let others: Vec<String> = imaps.iter().take(MAX_CANDIDATES).skip(1).map(|c| format!("{}:{}", c.host, c.port)).collect();
         return Err(match first_err {
-            Some(e) if !others.is_empty() => MailError::Net(format!("{} (also tried {})", net_detail(&e), others.join(", "))),
+            Some(e) if !others.is_empty() => {
+                MailError::Net(format!("{} (also tried {}; attempts: {})", net_detail(&e), others.join(", "), failures.join("; ")))
+            }
             Some(e) => e,
             None => MailError::Net("no server to try".into()),
         });

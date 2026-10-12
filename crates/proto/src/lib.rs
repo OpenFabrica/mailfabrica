@@ -85,6 +85,14 @@ enum Part<'a> {
     Lit(&'a [u8]),
 }
 
+/// 命令响应语义：认证的 NO 是凭据或访问策略拒绝，SASL 还需要处理继续请求。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommandKind {
+    Normal,
+    Login,
+    Sasl,
+}
+
 /// 一行 FETCH 响应里解析出的字段；没出现的字段为 `None`。
 #[derive(Default)]
 struct FetchItems {
@@ -107,7 +115,7 @@ impl ImapClient {
     /// 连接服务器并读取问候语；`StartTls` 时会执行 STARTTLS。
     pub fn connect(cfg: &ServerConfig) -> Result<ImapClient> {
         let stream = connect(cfg, TIMEOUT)?;
-        let mut client = ImapClient::from_stream(stream)?;
+        let mut client = ImapClient::from_stream(stream).map_err(|e| at_stage(e, "IMAP greeting"))?;
         if cfg.security == Security::StartTls {
             client.starttls(cfg.host.trim())?;
         }
@@ -146,30 +154,30 @@ impl ImapClient {
         let plain = self.has_cap("AUTH=PLAIN");
         let result = if self.has_cap("LOGINDISABLED") {
             if plain {
-                self.authenticate_plain(user, password)
+                self.authenticate_plain(user, password).map_err(|e| at_stage(e, "AUTHENTICATE PLAIN"))
             } else {
                 Err(MailError::Auth("server disabled LOGIN and offers no AUTH=PLAIN".into()))
             }
         } else {
             match self.exec(&[Part::Text("LOGIN ".into()), astring(user.as_bytes()), Part::Text(" ".into()), astring(password.as_bytes())]) {
                 Ok(_) => Ok(()),
-                // 有的服务器只接受 SASL；LOGIN 被拒时再试一次 AUTHENTICATE PLAIN，失败时报告第一次的原因。
+                // 只有 BAD（命令不支持或语法错误）才兼容 SASL；NO 已是认证拒绝，不能再次发送凭据。
                 Err(MailError::Server(first)) if plain => self.authenticate_plain(user, password).map_err(|e| match e {
                     MailError::Server(_) => MailError::Server(first),
-                    other => other,
+                    other => at_stage(other, &format!("AUTHENTICATE PLAIN (LOGIN rejected: {first})")),
                 }),
                 Err(e) => Err(e),
             }
         };
         result.map_err(|e| match e {
             MailError::Server(m) => MailError::Auth(m),
-            other => other,
+            other => at_stage(other, "IMAP authentication"),
         })?;
         // 登录后能力可能变化；服务器没在响应码里带上就主动再问一次。
         if !self.caps_seen {
-            self.refresh_caps()?;
+            self.refresh_caps().map_err(|e| at_stage(e, "IMAP post-login"))?;
         }
-        self.identify()?;
+        self.identify().map_err(|e| at_stage(e, "IMAP post-login"))?;
         Ok(())
     }
 
@@ -386,10 +394,10 @@ impl ImapClient {
         self.send(format!("{tag} AUTHENTICATE PLAIN\r\n").as_bytes())?;
         let mut collected = Vec::new();
         let mut budget = Budget::default();
-        self.wait_continue(&tag, &mut collected, &mut budget)?;
+        self.wait_continue(&tag, &mut collected, &mut budget, CommandKind::Sasl)?;
         let token = B64.encode([b"\0", user.as_bytes(), b"\0", password.as_bytes()].concat());
         self.send(format!("{token}\r\n").as_bytes())?;
-        self.read_until_tagged(&tag, collected, budget, true)?;
+        self.read_until_tagged(&tag, collected, budget, CommandKind::Sasl)?;
         Ok(())
     }
 
@@ -500,9 +508,19 @@ impl ImapClient {
         }
     }
 
-    /// 发送一条带标签的命令并收集它的全部未标记响应。标签完成响应为 NO/BAD 时返回 `MailError::Server`。
+    /// 发送一条带标签的命令并收集未标记响应；LOGIN NO 返回 Auth，其余 NO/BAD 返回 Server。
     /// 同步字面量会先等服务器的 `+` 再发数据；服务器支持 `LITERAL+` 时直接发。
     fn exec(&mut self, parts: &[Part]) -> Result<Vec<Response>> {
+        let command = match parts.first() {
+            Some(Part::Text(text)) => text.split_whitespace().next().unwrap_or("command"),
+            _ => "command",
+        };
+        let kind = if command == "LOGIN" { CommandKind::Login } else { CommandKind::Normal };
+        self.exec_parts(parts, kind).map_err(|e| at_stage(e, command))
+    }
+
+    /// 执行命令的收发流程；由外层统一标记失败阶段，避免把参数写进错误。
+    fn exec_parts(&mut self, parts: &[Part], kind: CommandKind) -> Result<Vec<Response>> {
         let tag = self.next_tag();
         if let Some(Part::Text(t)) = parts.first() {
             // 只记命令名，避免把密码写进日志。
@@ -520,7 +538,7 @@ impl ImapClient {
                     if !plus {
                         self.send(&buf)?;
                         buf.clear();
-                        self.wait_continue(&tag, &mut collected, &mut budget)?;
+                        self.wait_continue(&tag, &mut collected, &mut budget, kind)?;
                     }
                     buf.extend_from_slice(data);
                 }
@@ -528,18 +546,18 @@ impl ImapClient {
         }
         buf.extend_from_slice(b"\r\n");
         self.send(&buf)?;
-        self.read_until_tagged(&tag, collected, budget, false)
+        self.read_until_tagged(&tag, collected, budget, kind)
     }
 
     /// 等待 `+` 继续请求；期间的未标记响应收集起来。如果先等到本命令的完成响应，说明服务器拒绝了。
-    fn wait_continue(&mut self, tag: &str, collected: &mut Vec<Response>, budget: &mut Budget) -> Result<()> {
+    fn wait_continue(&mut self, tag: &str, collected: &mut Vec<Response>, budget: &mut Budget, command: CommandKind) -> Result<()> {
         loop {
             match self.next_counted(budget)? {
                 Response::Continue(_) => return Ok(()),
                 Response::Status { tag: Some(t), kind, code, text } if t == tag => {
                     return Err(match kind {
                         StatusKind::Ok => MailError::Protocol("command completed before literal was sent".into()),
-                        _ => MailError::Server(Response::describe(code.as_deref(), &text)),
+                        _ => completion_error(kind, code.as_deref(), &text, command),
                     });
                 }
                 Response::Status { tag: Some(t), .. } => log::warn!("imap: ignoring response for unknown tag {t}"),
@@ -548,22 +566,39 @@ impl ImapClient {
         }
     }
 
-    /// 读到本命令的标签完成响应为止。`cancel_continue` 为真时（SASL）遇到额外的 `+` 回 `*` 取消认证。
-    fn read_until_tagged(&mut self, tag: &str, mut collected: Vec<Response>, mut budget: Budget, cancel_continue: bool) -> Result<Vec<Response>> {
+    /// 读到本命令的标签完成响应为止；认证 NO 保留拒绝分类，SASL 遇到额外的 `+` 回 `*` 取消认证。
+    fn read_until_tagged(&mut self, tag: &str, mut collected: Vec<Response>, mut budget: Budget, command: CommandKind) -> Result<Vec<Response>> {
         loop {
             match self.next_counted(&mut budget)? {
                 Response::Status { tag: Some(t), kind, code, text } if t == tag => {
                     return match kind {
                         StatusKind::Ok => Ok(collected),
-                        _ => Err(MailError::Server(Response::describe(code.as_deref(), &text))),
+                        _ => Err(completion_error(kind, code.as_deref(), &text, command)),
                     };
                 }
                 Response::Status { tag: Some(t), .. } => log::warn!("imap: ignoring response for unknown tag {t}"),
-                Response::Continue(_) if cancel_continue => self.send(b"*\r\n")?,
+                Response::Continue(_) if command == CommandKind::Sasl => self.send(b"*\r\n")?,
                 Response::Continue(text) => return Err(MailError::Protocol(format!("unexpected continuation: {text}"))),
                 other => collected.push(other),
             }
         }
+    }
+}
+
+/// 区分认证拒绝 NO 与命令错误 BAD，避免把已拒绝的认证再次提交或被后续断线掩盖。
+fn completion_error(status: StatusKind, code: Option<&str>, text: &str, command: CommandKind) -> MailError {
+    let detail = Response::describe(code, text);
+    if status == StatusKind::No && command != CommandKind::Normal { MailError::Auth(detail) } else { MailError::Server(detail) }
+}
+
+/// 给连接和协议错误附加阶段，保留分类；认证拒绝保持服务器原始原因。
+pub(crate) fn at_stage(error: MailError, stage: &str) -> MailError {
+    match error {
+        MailError::Net(detail) => MailError::Net(format!("{stage}: {detail}")),
+        MailError::Tls(detail) => MailError::Tls(format!("{stage}: {detail}")),
+        MailError::Io(detail) => MailError::Io(format!("{stage}: {detail}")),
+        MailError::Protocol(detail) => MailError::Protocol(format!("{stage}: {detail}")),
+        other => other,
     }
 }
 
