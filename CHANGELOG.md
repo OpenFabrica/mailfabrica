@@ -1,11 +1,11 @@
 # 更新日志
 
-## 未发布
+## 0.1.4 · 2026-10-15 · stable
 
+- 新增日历视图：按月显示每天收到的邮件和系统日历里的日程，格子里带农历；左侧可按邮箱和系统日历勾选要显示的来源，点邮件直接打开。系统日历目前只支持 macOS（第一次打开会请求日历权限）。
 - 导出发票时可以选时间范围（本月、上个月、最近三个月、今年、去年或自定义日期），并勾选要导出哪些邮件。
-- 命令 `invoice.list`、`invoice.export` 增加 `since` / `until` 日期参数。
-- 新增日历视图：按月显示每天收到的邮件和系统日历事件，格子里带农历；左侧可按邮箱和系统日历勾选要显示的来源。系统日历目前只支持 macOS（第一次打开会请求日历权限）。
-- 新增命令 `calendar.load`、`calendar.days`、`calendar.status`。
+- macOS 上收信、打开邮件时不再反复弹出钥匙串授权框。
+- 新增命令 `calendar.load`、`calendar.days`、`calendar.status`；`invoice.list`、`invoice.export` 增加 `since` / `until` 日期参数。
 
 ## 0.1.3 · 2026-10-15 · stable
 
