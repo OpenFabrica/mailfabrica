@@ -123,8 +123,10 @@ def main():
                 result = subprocess.run(["ldd", str(path)], text=True, capture_output=True, check=True)
                 assert "not found" not in result.stdout, result.stdout
         version = subprocess.check_output([str(gui), "--version"], text=True, encoding="utf-8", timeout=30).strip()
-        # 开发版的清单版本带 git 短哈希（0.1.5-dev-1a2b3c4，有改动时再加 +），程序自己只报 Cargo 版本（0.1.5-dev）
-        assert version == "MailFabrica " + re.sub(r"-dev-[0-9a-f]{7}\+?$", "-dev", manifest["version"]), version
+        # 开发版的清单版本带 git 短哈希（0.1.5-dev-1a2b3c4，有改动时再加 +），程序自己只报 Cargo 版本（0.1.5-dev）；
+        # 更新器也按程序报的版本核对，后面的自动替换验收同样用 Cargo 版本
+        cargo_version = re.sub(r"-dev-[0-9a-f]{7}\+?$", "-dev", manifest["version"])
+        assert version == f"MailFabrica {cargo_version}", version
         response = subprocess.check_output([str(cli), "--demo", "list", "--limit", "2", "--json"], text=True, encoding="utf-8", timeout=60)
         assert json.loads(response)
         with socket.socket() as reserve:
@@ -181,7 +183,7 @@ def main():
                 if process.poll() is None:
                     process.terminate()
                     process.wait(timeout=20)
-        result = subprocess.run(["cargo", "xtask", "update-qa", str(archive.resolve()), manifest["version"], str(gui), str(port)],
+        result = subprocess.run(["cargo", "xtask", "update-qa", str(archive.resolve()), cargo_version, str(gui), str(port)],
                                 text=True, encoding="utf-8", capture_output=True, timeout=180)
         (screenshots / f"{args.platform}-{args.arch}-automatic-update.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         assert result.returncode == 0, result.stdout + result.stderr
