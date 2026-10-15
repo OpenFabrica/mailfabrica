@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "eframe",
  "egui",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-ai"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "rustls",
  "serde",
@@ -2522,14 +2522,14 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-brand"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "tiny-skia",
 ]
 
 [[package]]
 name = "mailfabrica-cli"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "log",
  "mailfabrica-engine",
@@ -2539,7 +2539,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-core"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "chrono",
  "serde",
@@ -2549,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-engine"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "keyring",
  "log",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-html"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-mcp"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "log",
  "mailfabrica-engine",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-mime"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "chrono",
  "html2text",
@@ -2606,7 +2606,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-proto"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-rich"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "serde",
  "serde_json",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-store"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "log",
  "mailfabrica-core",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-sync"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -2648,7 +2648,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-ui-egui"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "base64 0.22.1",
  "egui",
@@ -2662,7 +2662,7 @@ dependencies = [
 
 [[package]]
 name = "mailfabrica-update"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "flate2",
  "rustls",
@@ -6015,7 +6015,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.3"
+version = "0.1.4-dev"
 dependencies = [
  "mailfabrica-brand",
  "mailfabrica-update",
