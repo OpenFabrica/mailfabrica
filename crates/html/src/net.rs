@@ -99,6 +99,15 @@ impl NetProvider for MailNet {
             "cid" => {
                 let id = cid_key(request.url.path());
                 let data = self.inline.get(&id).cloned().unwrap_or_default();
+                // 测试用：`late-` 开头的 cid 过一会儿再给，模拟远程图片在第一次排版之后才到
+                #[cfg(test)]
+                if id.starts_with("late-") {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        handler.bytes(url, Bytes::from(data));
+                    });
+                    return;
+                }
                 handler.bytes(url, Bytes::from(data));
             }
             "data" => {

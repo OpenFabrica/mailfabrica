@@ -268,3 +268,123 @@ fn local_image_urls_are_not_requested() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// 排好版后画第一块图。
+fn first_tile(html: &str, width: f32) -> Tile {
+    let mut v = HtmlView::new(html, offline());
+    v.set_size(width, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    v.request_tile(0);
+    let ev = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Tile(_))));
+    ev.into_iter().find_map(|e| if let Event::Tile(t) = e { Some(t) } else { None }).expect("tile")
+}
+
+/// 图块里 (x, y) 处的 RGB。
+fn rgb(t: &Tile, x: usize, y: usize) -> Vec<u8> {
+    let i = (y * t.width as usize + x) * 4;
+    t.rgba.get(i..i + 3).map(<[u8]>::to_vec).unwrap_or_default()
+}
+
+/// `<body>` 上的宽度限制不生效（Gmail 也不认）：否则整封信被挤到中间偏右，宽表格从右边溢出。
+#[test]
+fn body_width_styles_are_ignored() {
+    let html = r#"<body style="max-width:200px;margin:0 auto"><div style="width:600px;height:20px;background:#ff0000"></div></body>"#;
+    let t = first_tile(html, 800.0);
+    assert_eq!(rgb(&t, 5, 10), vec![255, 0, 0], "content must start at the left edge");
+}
+
+/// `width="100%"` 的超宽图片（`late-` 开头的 cid 图片，在第一次排版之后才到，和远程图片一样）不能把
+/// `max-width` 的表格撑宽：图片要限制在容器宽度内，图片到达后外层表格的排版缓存也要清掉重算。
+#[test]
+fn wide_percentage_image_keeps_table_max_width() {
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(3000, 50, image::Rgba([0, 0, 255, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("png");
+    let options = Options { remote_images: false, inline: vec![("late-wide@x".into(), png)], wake: Arc::new(|| {}) };
+    // 结构仿 Meta 验证码邮件：外层 max-width 表格；头图在第一行，文字在第二行里嵌套的 width=100% 表格中
+    let html = r#"<body style="margin:0"><table cellspacing="0" cellpadding="0" align="center" style="border-collapse:collapse;max-width:300px;margin:0 auto"><tr><td>
+        <table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">
+        <tr><td><table width="100%" height="50" cellspacing="0" cellpadding="0" style="max-width:1400px;margin:0 auto"><tr>
+          <td style="padding:0;overflow:hidden"><img width="100%" height="50" src="cid:late-wide@x" style="display:block;width:100%;object-fit:cover"></td>
+        </tr></table></td></tr>
+        <tr><td><table width="100%" cellspacing="0" cellpadding="0"><tr><td>
+          <span style="display:block;font-size:15px;color:#000">A long paragraph of text that is much wider than three hundred pixels on one line.</span>
+        </td></tr></table></td></tr>
+        </table></td></tr></table></body>"#;
+    let mut v = HtmlView::new(html, options);
+    v.set_size(800.0, 1.0);
+    // 图片到达后会重新排版：一直取最新一代的第一块图，直到图片画出来
+    let start = Instant::now();
+    let mut tile = None;
+    while start.elapsed() < Duration::from_secs(20) {
+        v.request_tile(0);
+        for e in v.poll() {
+            if let Event::Tile(t) = e {
+                tile = Some(t);
+            }
+        }
+        if tile.as_ref().is_some_and(|t| t.rgba.as_chunks::<4>().0.iter().any(|p| p[..3] == [0, 0, 255])) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let t = tile.expect("tile");
+    // 表格 300 宽、居中：左右各 250
+    assert_eq!(rgb(&t, 260, 25), vec![0, 0, 255], "the image must be shown");
+    assert_ne!(rgb(&t, 600, 25), vec![0, 0, 255], "the image must not overflow the table");
+    let dark_right = (50..t.height as usize)
+        .filter_map(|y| (0..800).rev().find(|&x| t.rgba[(y * 800 + x) * 4 + 3] > 200 && rgb(&t, x, y).iter().all(|c| *c < 90)))
+        .max();
+    assert!(dark_right.is_some_and(|x| x < 555), "text must wrap inside the 300px table: rightmost dark pixel {dark_right:?}");
+}
+
+/// `width="100%"` 的超宽图片（一开始就有）要限制在容器宽度内，不能把 `max-width` 的表格按原图宽度撑开。
+#[test]
+fn wide_percentage_image_is_capped_to_its_container() {
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(3000, 50, image::Rgba([0, 0, 255, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("png");
+    let options = Options { remote_images: false, inline: vec![("wide@x".into(), png)], wake: Arc::new(|| {}) };
+    let html = r#"<body style="margin:0"><table cellspacing="0" cellpadding="0" align="center" style="max-width:300px;margin:0 auto"><tr><td>
+        <table width="100%" cellspacing="0" cellpadding="0"><tr><td><img width="100%" height="50" src="cid:wide@x" style="display:block;width:100%"></td></tr></table>
+        </td></tr><tr><td><div style="height:20px;background:#ff0000"></div></td></tr></table></body>"#;
+    let mut v = HtmlView::new(html, options);
+    v.set_size(800.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    v.request_tile(0);
+    let ev = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Tile(_))));
+    let t = ev.into_iter().find_map(|e| if let Event::Tile(t) = e { Some(t) } else { None }).expect("tile");
+    assert_eq!(rgb(&t, 400, 25), vec![0, 0, 255]);
+    assert_eq!(rgb(&t, 400, 60), vec![255, 0, 0]);
+    assert_ne!(rgb(&t, 600, 60), vec![255, 0, 0], "the table must stay 300px wide");
+}
+
+/// 从空白处（左边距、文字下面）开始或结束拖动也能选中文字：吸附到最近的文字，和浏览器一样。
+#[test]
+fn selection_snaps_to_nearest_text() {
+    let html = r#"<body style="margin:0"><p style="margin:0 0 0 200px;font-size:20px">Hello world</p><p style="margin:40px 0 0 200px;font-size:20px">Second line</p></body>"#;
+    let mut v = HtmlView::new(html, offline());
+    v.set_size(800.0, 1.0);
+    pump(&mut v, |v, _| v.layout().is_some());
+    // 从左边空白处拖到第二段右边很远的地方
+    v.pointer(Pointer::Down { x: 10.0, y: 10.0, shift: false });
+    v.pointer(Pointer::Drag { x: 790.0, y: 75.0 });
+    v.pointer(Pointer::Up { x: 790.0, y: 75.0 });
+    v.copy();
+    let ev = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Copied(_))));
+    let copied = ev.into_iter().find_map(|e| if let Event::Copied(s) = e { Some(s) } else { None }).unwrap_or_default();
+    assert!(copied.contains("Hello world") && copied.contains("Second line"), "{copied:?}");
+    // 选中的部分画了背景色
+    v.request_tile(0);
+    let ev = pump(&mut v, |_, e| e.iter().any(|e| matches!(e, Event::Tile(_))));
+    let tile = ev.into_iter().find_map(|e| if let Event::Tile(t) = e { Some(t) } else { None }).expect("tile");
+    let highlighted = tile.rgba.as_chunks::<4>().0.iter().filter(|p| p[0] == 180 && p[1] == 213 && p[2] == 255).count();
+    assert!(highlighted > 500, "{highlighted} highlighted pixels");
+    // 在空白处单击：选区收起，没有高亮
+    v.pointer(Pointer::Down { x: 10.0, y: 200.0, shift: false });
+    v.pointer(Pointer::Up { x: 10.0, y: 200.0 });
+    pump(&mut v, |v, _| !v.has_selection());
+    assert!(!v.has_selection());
+}

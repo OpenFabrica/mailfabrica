@@ -27,6 +27,8 @@ pub struct HtmlPane {
     dragging: bool,
     /// 上次发给渲染器的悬停位置（没变就不重复发）。
     last_hover: Option<(f32, f32)>,
+    /// 上一帧正文画在哪里（控制通道目标 `reader.html` 用）。
+    pub(crate) rect: Option<Rect>,
 }
 
 impl HtmlPane {
@@ -34,7 +36,7 @@ impl HtmlPane {
     pub fn new(ctx: &egui::Context, html: &str, inline: Vec<(String, Vec<u8>)>) -> HtmlPane {
         let ctx = ctx.clone();
         let options = Options { remote_images: true, inline, wake: Arc::new(move || ctx.request_repaint()) };
-        HtmlPane { html: HtmlView::new(html, options), textures: HashMap::new(), dragging: false, last_hover: None }
+        HtmlPane { html: HtmlView::new(html, options), textures: HashMap::new(), dragging: false, last_hover: None, rect: None }
     }
 
     /// 按可用宽度画出来。渲染器失败时返回 `Err`（调用方改用别的显示方式）；点了链接返回 `Ok(Some(地址))`。
@@ -78,6 +80,7 @@ impl HtmlPane {
             return Ok(None);
         };
         let (rect, resp) = ui.allocate_exact_size(vec2(width, layout.height), Sense::click_and_drag());
+        self.rect = Some(rect);
         // 邮件按白底设计；深色主题下垫一张白纸，不然没写背景色的邮件会是黑底黑字
         if t.dark {
             ui.painter().rect_filled(rect, 6.0, Color32::WHITE);
@@ -143,7 +146,12 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, 
     }
     let lang = app.lang();
     let Some(b) = app.reader.html.as_mut() else { return false };
-    match b.pane.show(ui, lang) {
+    let shown = b.pane.show(ui, lang);
+    // 登记控制通道目标，`ui.drag` 可以在正文里拖动选文字
+    if let Some(r) = b.pane.rect {
+        app.target("reader.html", r);
+    }
+    match shown {
         Ok(open) => {
             if let Some(url) = open {
                 app.defer("ui.openUrl", json!({"url": url}));

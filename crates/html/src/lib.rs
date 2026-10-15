@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyrender::ImageRenderer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
-use blitz_dom::{BaseDocument, DEFAULT_CSS, DocumentConfig, Point, local_name};
+use blitz_dom::{BaseDocument, DEFAULT_CSS, DocumentConfig, NodeId, Point, local_name};
 use blitz_html::HtmlDocument;
 use blitz_traits::shell::{ColorScheme, ShellProvider, Viewport};
 
@@ -40,9 +40,18 @@ const BASE_URL: &str = "https://mail.invalid/";
 /// 补在 blitz 默认样式表后面的"邮件阅读器"样式，向 Gmail 看齐：默认无衬线字体；
 /// 没有 `href` 的 `<a>` 不是链接，不加下划线也不变色；`<table align=center>` 按 HTML 规范左右 margin 自动
 /// （blitz 默认样式表漏了这条，邮件里大量用它居中）。作者自己的样式优先级更高，会覆盖这些。
+///
+/// `img { max-width: 100% }`：写着 `width="100%"` 的大图（如 5600px 宽的页眉）在 blitz 的表格排版里会按原图宽度
+/// 撑大整列，连外层表格的 `max-width` 都失效，文字不再换行、右边被截掉；限制到容器宽度后和浏览器一致。
+///
+/// 例外：`body` 的宽度限制用 `!important` 强制去掉（UA 的 `!important` 在层叠里优先级最高，作者样式盖不过）。
+/// Gmail 不认 `<body>` 上的样式；有的邮件（如 Meta 验证码）把 `max-width:343px;margin:0 auto` 写在 body 上，
+/// 里面又是 `width=686` 的表格，按浏览器规则会把整封信挤到中间偏右、超出右边。
 const MAIL_CSS: &str = r#"
 body { margin: 8px; font-family: Arial, Helvetica, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; font-size: 14px; color: #222; }
+body { max-width: none !important; min-width: 0 !important; width: auto !important; }
 a:not([href]) { color: inherit; text-decoration: none; cursor: auto; }
+img { max-width: 100%; }
 table[align="center" i] { margin-left: auto; margin-right: auto; }
 "#;
 
@@ -284,6 +293,10 @@ struct Worker {
     press: Option<(Option<String>, f32, f32, bool)>,
     /// 链接区域（每次排版后重算）：([左, 上, 右, 下] 的列表, 地址)。
     links: Vec<(Vec<[f32; 4]>, String)>,
+    /// 每段文字（inline root）的内容框（每次排版后重算）：(节点, [左, 上, 右, 下])，鼠标不在文字上时吸附用。
+    text_boxes: Vec<(NodeId, [f32; 4])>,
+    /// 选区起点（按下时定下，拖动时不变）。
+    anchor: Option<(NodeId, usize)>,
     /// 同尺寸图块复用光栅器和已解码图片缓存，避免每块重新初始化。
     painter: Option<(u32, u32, VelloCpuImageRenderer)>,
 }
@@ -300,6 +313,8 @@ fn run(html: String, options: Options, rx: Receiver<Cmd>, reply: Sender<Reply>, 
         hover: None,
         press: None,
         links: Vec::new(),
+        text_boxes: Vec::new(),
+        anchor: None,
         painter: None,
     };
     while let Ok(first) = rx.recv() {
@@ -321,10 +336,10 @@ fn run(html: String, options: Options, rx: Receiver<Cmd>, reply: Sender<Reply>, 
             }
         }
         if let Some((width, scale)) = relayout {
-            w.relayout(width, scale);
+            w.relayout(width, scale, wake);
         } else if wake && let Some(l) = w.layout {
             // 图片等资源到了：处理后按原尺寸重新排版
-            w.relayout(l.width, l.scale);
+            w.relayout(l.width, l.scale, true);
         }
         for c in rest {
             match c {
@@ -353,7 +368,8 @@ impl Worker {
     }
 
     /// 按宽度和像素比（重新）排版，发新一代的 [`Layout`]。第一次调用时才解析文档（要先知道宽度）。
-    fn relayout(&mut self, width: f32, scale: f32) {
+    /// `resources` 为真表示图片等资源刚到，要先清掉排版缓存（见 [`clear_layout_caches`]）。
+    fn relayout(&mut self, width: f32, scale: f32, resources: bool) {
         let viewport = Viewport::new((width * scale).round() as u32, (VIEWPORT_HEIGHT * scale).round() as u32, scale, ColorScheme::Light);
         let doc = match &mut self.doc {
             Some(d) => {
@@ -381,12 +397,16 @@ impl Worker {
         };
         let base = doc.as_mut();
         base.handle_messages();
+        if resources {
+            clear_layout_caches(base);
+        }
         base.set_viewport_scroll(Point { x: 0.0, y: 0.0 });
         base.resolve(0.0);
         let height = base.try_root_element().map(|r| r.final_layout().size.height).unwrap_or(0.0).clamp(1.0, MAX_HEIGHT);
         let generation = self.layout.map(|l| l.generation + 1).unwrap_or(1);
         let l = Layout { generation, width, scale, height };
         self.collect_links();
+        self.collect_text_boxes();
         self.layout = Some(l);
         self.send(Reply::Layout(l));
     }
@@ -450,6 +470,54 @@ impl Worker {
         }
     }
 
+    /// 排版后记下每段文字的内容框（文档坐标），给 [`text_position`](Self::text_position) 吸附用。
+    fn collect_text_boxes(&mut self) {
+        self.text_boxes.clear();
+        let Some(doc) = self.doc.as_ref() else { return };
+        let base = doc.as_ref();
+        for (id, node) in base.tree().iter() {
+            let has_text = node.element_data().and_then(|e| e.inline_layout_data.as_ref()).is_some_and(|t| !t.text.trim().is_empty());
+            if !node.flags.is_inline_root() || !has_text {
+                continue;
+            }
+            let l = node.final_layout();
+            let origin = node.absolute_position(0.0, 0.0);
+            let left = origin.x + l.border.left + l.padding.left;
+            let top = origin.y + l.border.top + l.padding.top;
+            let right = origin.x + l.size.width - l.border.right - l.padding.right;
+            let bottom = origin.y + l.size.height - l.border.bottom - l.padding.bottom;
+            if right > left && bottom > top {
+                self.text_boxes.push((id, [left, top, right, bottom]));
+            }
+        }
+    }
+
+    /// (x, y) 处的文字位置（节点, 字节偏移）。不在文字上时（空白边距、段落之间、行尾后面）吸附到最近的一段文字：
+    /// 先找上下覆盖这一点的段落里左右最近的，没有就找上下最近的；再把点夹进它的内容框，按 parley 找最近的字。
+    /// blitz 自己的 `find_text_position` 只认正好压在文字上的点，从空白处开始拖就选不上任何东西。
+    fn text_position(&self, x: f32, y: f32) -> Option<(NodeId, usize)> {
+        let base = self.doc.as_ref()?.as_ref();
+        if let Some(pos) = base.find_text_position(x, y) {
+            return Some(pos);
+        }
+        let gap = |lo: f32, hi: f32, v: f32| {
+            if v < lo {
+                lo - v
+            } else if v > hi {
+                v - hi
+            } else {
+                0.0
+            }
+        };
+        let (id, b) = self.text_boxes.iter().min_by(|(_, a), (_, b)| {
+            let key = |r: &[f32; 4]| (gap(r[1], r[3], y), gap(r[0], r[2], x));
+            key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+        let cx = x.clamp(b[0], b[2]) - b[0];
+        let cy = y.clamp(b[1], b[3] - 0.5) - b[1];
+        base.get_node(*id)?.text_offset_at_point(cx, cy).map(|offset| (*id, offset))
+    }
+
     /// 坐标 (x, y) 下的链接。后出现的优先（嵌套或重叠时一般画在上面）。
     fn link_at(&self, x: f32, y: f32) -> Option<String> {
         self.links.iter().rev().find(|(rects, _)| rects.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3])).map(|(_, u)| u.clone())
@@ -471,15 +539,22 @@ impl Worker {
             Pointer::Down { x, y, shift } => {
                 let link = self.link_at(x, y);
                 self.press = Some((link, x, y, false));
+                let pos = self.text_position(x, y);
+                let anchor = self.anchor;
                 let Some(doc) = self.doc.as_mut() else { return };
                 let base = doc.as_mut();
                 let had = base.has_text_selection();
-                if shift && had {
-                    base.extend_text_selection_to_point(x, y);
-                } else if let Some((node, offset)) = base.find_text_position(x, y) {
-                    base.set_text_selection(node, offset, node, offset);
-                } else {
-                    base.clear_text_selection();
+                match (pos, anchor) {
+                    // Shift+点击：从原来的起点扩展到这里
+                    (Some((node, offset)), Some((an, ao))) if shift && had => base.set_text_selection(an, ao, node, offset),
+                    (Some((node, offset)), _) => {
+                        self.anchor = Some((node, offset));
+                        base.set_text_selection(node, offset, node, offset);
+                    }
+                    (None, _) => {
+                        self.anchor = None;
+                        base.clear_text_selection();
+                    }
                 }
                 let has = base.has_text_selection();
                 if had || shift {
@@ -497,12 +572,12 @@ impl Worker {
                         return;
                     }
                 }
+                let (Some((an, ao)), Some((node, offset))) = (self.anchor, self.text_position(x, y)) else { return };
                 let Some(doc) = self.doc.as_mut() else { return };
-                if doc.as_mut().extend_text_selection_to_point(x, y) {
-                    let has = doc.as_ref().has_text_selection();
-                    self.invalidate();
-                    self.send(Reply::Selection(has));
-                }
+                doc.as_mut().set_text_selection(an, ao, node, offset);
+                let has = doc.as_ref().has_text_selection();
+                self.invalidate();
+                self.send(Reply::Selection(has));
             }
             Pointer::Up { x, y } => {
                 let Some((link, ..)) = self.press.take().filter(|p| !p.3) else { return };
@@ -510,6 +585,18 @@ impl Worker {
                     self.send(Reply::OpenLink(url));
                 }
             }
+        }
+    }
+}
+
+/// 清掉所有节点的排版缓存。blitz 在图片后到时只清图片自己的缓存，外层表格单元格还留着按"没有图片"
+/// 算出的尺寸，重新排版会得到和"一开始就有图片"不同的结果：例如 `width="100%"` 的超宽页眉图把整列撑宽，
+/// 文字不换行、跑出右边。清掉后重新计算，结果和图片一开始就在时一致。只在资源到达时做，代价是多算一遍排版。
+fn clear_layout_caches(base: &mut BaseDocument) {
+    let ids: Vec<_> = base.tree().iter().map(|(id, _)| id).collect();
+    for id in ids {
+        if let Some(el) = base.get_node_mut(id).and_then(|n| n.element_data_mut()) {
+            el.cache.clear();
         }
     }
 }
