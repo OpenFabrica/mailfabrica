@@ -72,7 +72,7 @@ impl Config {
         }
     }
 
-    /// 检查设置是否能用：地址必须是 https，或者是本机的 http（Ollama 之类本地模型）；
+    /// 检查设置是否能用：地址必须是 https，或者是本机 / 局域网的 http（Ollama、vLLM 之类自己部署的模型，见 [`private_host`]）；
     /// OpenAI 兼容协议必须填地址和模型。
     pub fn validate(&self) -> Result<(), String> {
         let url = self.url();
@@ -82,21 +82,46 @@ impl Config {
         if self.model().is_empty() {
             return Err("Set the AI model first".into());
         }
-        // 密钥会放在请求头里：远程地址只允许 https，明文 http 只给本机用
+        // 密钥会放在请求头里：公网地址只允许 https，明文 http 只给本机和局域网用
         let lower = url.to_ascii_lowercase();
         let ok = if let Some(rest) = lower.strip_prefix("http://") {
             let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
             let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
-            let name = if host.starts_with('[') {
-                host.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+            let name = if let Some(v6) = host.strip_prefix('[') {
+                v6.split(']').next().unwrap_or_default()
             } else {
-                host.split(':').next().unwrap_or_default().to_string()
+                host.split(':').next().unwrap_or_default()
             };
-            matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+            private_host(name)
         } else {
             lower.starts_with("https://")
         };
-        if ok { Ok(()) } else { Err("The AI service URL must use https:// (plain http:// is only allowed for localhost)".into()) }
+        if ok {
+            Ok(())
+        } else {
+            Err("The AI service URL must use https:// (plain http:// is only allowed for localhost and local network addresses)".into())
+        }
+    }
+}
+
+/// 允许走明文 http 的主机（已转小写，IPv6 不带方括号）：本机、局域网和 Tailscale 这类内网地址。
+/// 只认 IP 字面量和 `localhost` / `*.localhost` / `*.local`（mDNS）这几种名字：普通域名可能解析到公网，不放行。
+fn private_host(name: &str) -> bool {
+    if name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") {
+        return true;
+    }
+    match name.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            // 100.64.0.0/10 是运营商级 NAT 段，Tailscale 等组网工具用它给设备分地址
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || (a == 100 && (64..128).contains(&b))
+        }
+        Ok(std::net::IpAddr::V6(ip)) => {
+            let first = ip.segments()[0];
+            // fc00::/7 唯一本地地址，fe80::/10 链路本地地址
+            ip.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
     }
 }
 

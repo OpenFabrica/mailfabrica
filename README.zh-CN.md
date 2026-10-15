@@ -56,7 +56,7 @@ AI 功能默认关闭，先在 **设置** 里配置一个服务：
 - **Anthropic**（默认）：地址 `https://api.anthropic.com`，模型 `claude-opus-5-5`，只需填 API 密钥。
 - **OpenAI 兼容接口**：任何 Chat Completions 接口（DeepSeek、通义千问/DashScope、Ollama 等），地址和模型必填。
 
-API 密钥存系统钥匙串（和邮箱密码同一处），不会写进 `prefs.json`。地址必须是 `https`；只有本机（localhost，例如 Ollama）可以用 `http`。只有你点了 AI 操作，邮件内容才会发给所配置的 AI 服务。
+API 密钥存系统钥匙串（和邮箱密码同一处），不会写进 `prefs.json`。地址必须是 `https`；只有本机和局域网地址（如 `192.168.x.x`、`*.local`，例如 Ollama 或自己部署的模型）可以用 `http`。只有你点了 AI 操作，邮件内容才会发给所配置的 AI 服务。
 
 命令行见 `docs/cli.md`，MCP 见 `docs/mcp.md`，控制通道见 `docs/control-protocol.md`。
 

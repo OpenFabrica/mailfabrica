@@ -56,7 +56,7 @@ The AI features are off until you configure a service in **Settings**:
 - **Anthropic** (default): URL `https://api.anthropic.com`, model `claude-opus-5-5`. Only the API key is needed.
 - **OpenAI-compatible**: any Chat Completions endpoint (DeepSeek, Qwen/DashScope, Ollama, ...). URL and model are required.
 
-The API key is kept in the system keychain (the same place as mail passwords) and never written to `prefs.json`. The URL must be `https`; plain `http` is allowed only for localhost (for example Ollama). Email content is sent to the configured AI service only when you click an AI action.
+The API key is kept in the system keychain (the same place as mail passwords) and never written to `prefs.json`. The URL must be `https`; plain `http` is allowed only for localhost and local network addresses such as `192.168.x.x` or `*.local` (for example Ollama or a self-hosted model). Email content is sent to the configured AI service only when you click an AI action.
 
 Command line: `docs/cli.md`. MCP: `docs/mcp.md`. Control channel: `docs/control-protocol.md`. (These documents are in Chinese.)
 

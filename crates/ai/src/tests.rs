@@ -4,7 +4,7 @@ use crate::http::{anthropic_body, anthropic_text, api_error, openai_body, openai
 use crate::prompt::{ComposeAction, ComposeInput, ReplyInput};
 use serde_json::json;
 
-/// 只允许 https 和本机 http。
+/// 只允许 https，以及本机 / 局域网的 http。
 #[test]
 fn validate_urls() {
     let cfg = |p, url: &str| Config { provider: p, base_url: url.into(), model: "m".into() };
@@ -15,6 +15,31 @@ fn validate_urls() {
     assert!(cfg(Provider::OpenAi, "http://[::1]:8080/v1").validate().is_ok());
     assert!(cfg(Provider::OpenAi, "http://example.com/v1").validate().is_err());
     assert!(cfg(Provider::OpenAi, "http://localhost.evil.com/v1").validate().is_err());
+    // 局域网里自己部署的模型
+    for ok in [
+        "http://172.16.10.200:3000/v1",
+        "http://192.168.1.5:11434/v1",
+        "http://10.0.0.2/v1",
+        "http://100.101.102.103:8000/v1",
+        "http://169.254.1.1/v1",
+        "http://[fd00::1]:8080/v1",
+        "http://[fe80::1]/v1",
+        "http://studio.local:11434/v1",
+        "http://user@192.168.1.5/v1",
+    ] {
+        assert!(cfg(Provider::OpenAi, ok).validate().is_ok(), "{ok}");
+    }
+    // 公网 IP 和看着像内网的域名不行
+    for bad in [
+        "http://172.32.0.1/v1",
+        "http://8.8.8.8/v1",
+        "http://100.128.0.1/v1",
+        "http://[2001:db8::1]/v1",
+        "http://192.168.1.5.evil.com/v1",
+        "http://evil.com@8.8.8.8/v1",
+    ] {
+        assert!(cfg(Provider::OpenAi, bad).validate().is_err(), "{bad}");
+    }
     assert!(cfg(Provider::OpenAi, "").validate().is_err());
     assert!(cfg(Provider::OpenAi, "ftp://x").validate().is_err());
     // OpenAI 兼容协议没有默认模型

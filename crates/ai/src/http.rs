@@ -63,7 +63,7 @@ impl Client for Http {
     }
 }
 
-/// HTTPS 默认，限时，不跟太多重定向；http 只在 `Config::validate` 放行的本机地址上用。
+/// HTTPS 默认，限时，不跟太多重定向；http 只在 `Config::validate` 放行的本机 / 局域网地址上用。
 fn agent() -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder().unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider())).build();
     ureq::Agent::config_builder()

@@ -64,7 +64,7 @@
 //! - `ai.config` — `{provider?: "anthropic"|"openai", baseUrl?, model?, apiKey?}` 设置 AI 助手接口；`apiKey` 存进密码存储，
 //!   空串删除。返回 `{provider, baseUrl, model, effectiveUrl, effectiveModel, hasKey, ready}`（不含密钥）。
 //!   `anthropic` 默认地址 `https://api.anthropic.com`、模型 `claude-opus-5-5`；`openai` 是 OpenAI 兼容接口（DeepSeek、通义、Ollama…），
-//!   地址和模型必填。地址只允许 https，本机（localhost）可用 http。
+//!   地址和模型必填。地址只允许 https，本机和局域网地址（如 `192.168.x.x`、`*.local`）可用 http。
 //! - `ai.compose` — `{id, action?: "write"|"polish"|"formal"|"friendly"|"shorter"|"longer"|"translate", instruction?}`
 //!   后台生成建议正文，放进写信窗口的 `aiSuggestion`（`aiBusy` 期间为 true，失败写 `aiError`）。只改写签名和原文引用之前
 //!   用户自己写的部分；回复/转发时把原邮件作为上下文。`write` 且草稿为空时 `instruction` 必填；其他动作需要草稿。
