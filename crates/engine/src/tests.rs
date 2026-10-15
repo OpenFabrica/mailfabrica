@@ -1197,3 +1197,181 @@ fn account_provider_presets_and_explicit_overrides() {
     assert_eq!(s.account(result["id"].as_str().expect("id")).expect("account").imap.host, "custom.company.example");
     assert!(s.execute("account.add", json!({"email":"three@company.example","password":"demo","provider":"unknown"})).is_err());
 }
+
+// ---------------------------------------------------------------- AI 助手
+
+/// 用假 AI 客户端（不联网）并存好密钥的会话。
+fn with_ai(s: &mut Session, reply: std::result::Result<&str, &str>) {
+    s.set_ai_client(Arc::new(mailfabrica_ai::FakeClient(reply.map(str::to_string).map_err(str::to_string))));
+    s.execute("ai.config", json!({"apiKey": "test-key"})).unwrap();
+}
+
+/// 设置：密钥只报有没有；OpenAI 兼容协议要地址；非本机 http 地址算没准备好。
+#[test]
+fn ai_config_round_trip() {
+    let (mut s, _f, _d) = setup();
+    let r = s.execute("ai.config", json!({})).unwrap();
+    assert_eq!(r["provider"], "anthropic");
+    assert_eq!(r["effectiveModel"], "claude-opus-5-5");
+    assert_eq!(r["hasKey"], false);
+    assert_eq!(r["ready"], false);
+    let r = s.execute("ai.config", json!({"apiKey": "sk-1"})).unwrap();
+    assert_eq!(r["hasKey"], true);
+    assert_eq!(r["ready"], true);
+    assert!(r.get("apiKey").is_none());
+    let r = s.execute("ai.config", json!({"provider": "openai", "baseUrl": "http://example.com/v1", "model": "qwen"})).unwrap();
+    assert_eq!(r["ready"], false);
+    let r = s.execute("ai.config", json!({"baseUrl": "http://localhost:11434/v1", "apiKey": ""})).unwrap();
+    assert_eq!(r["hasKey"], false);
+    assert_eq!(r["ready"], true);
+    assert!(s.execute("ai.config", json!({"provider": "x"})).is_err());
+}
+
+/// 没有密钥时 Anthropic 不能用，错误说清楚。
+#[test]
+fn ai_needs_key() {
+    let (mut s, _f, _d) = setup();
+    let id = s.execute("compose.new", json!({})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("ai.compose", json!({"id": id, "instruction": "写个请假条"})).unwrap_err().to_string();
+    assert!(e.contains("API key"), "{e}");
+}
+
+/// 回复时：建议只替换自己写的部分，签名和原文引用保持不动。
+#[test]
+fn ai_compose_suggest_and_accept() {
+    let (mut s, _f, _d) = setup();
+    s.prefs.compose_rich = false;
+    with_ai(&mut s, Ok("好的，周五见。"));
+    let key = s.view().messages.iter().find(|m| m.subject == "项目周报").unwrap().key.clone();
+    s.execute("message.open", json!({"key": key.to_string()})).unwrap();
+    s.wait_idle(WAIT);
+    let id = s.execute("compose.reply", json!({"key": key.to_string()})).unwrap()["id"].as_u64().unwrap();
+    s.execute("compose.set", json!({"id": id, "body": format!("草稿\n\n{}", s.compose(id).unwrap().body.trim_start())})).unwrap();
+    // 草稿为空的改写动作被拒绝；这里有草稿，可以润色
+    s.execute("ai.compose", json!({"id": id, "action": "polish"})).unwrap();
+    assert!(s.compose(id).unwrap().ai_busy);
+    // 正在生成时不能再来一次
+    assert!(s.execute("ai.compose", json!({"id": id, "action": "polish"})).is_err());
+    s.wait_idle(WAIT);
+    let c = s.compose(id).unwrap();
+    assert!(!c.ai_busy);
+    assert_eq!(c.ai_suggestion.as_deref(), Some("好的，周五见。"));
+    s.execute("ai.accept", json!({"id": id})).unwrap();
+    let c = s.compose(id).unwrap();
+    assert!(c.body.starts_with("好的，周五见。\n\n"), "{}", c.body);
+    assert!(c.body.contains("写道：") && c.body.contains("> 本周进展顺利"), "{}", c.body);
+    assert!(!c.body.contains("草稿"));
+    assert!(c.ai_suggestion.is_none() && c.dirty);
+    // 没有建议时 accept 报错
+    assert!(s.execute("ai.accept", json!({"id": id})).is_err());
+}
+
+/// 生成失败：错误留在写信窗口，正文不变；dismiss 清掉。
+#[test]
+fn ai_compose_failure() {
+    let (mut s, _f, _d) = setup();
+    with_ai(&mut s, Err("AI service error (HTTP 401)"));
+    let id = s.execute("compose.new", json!({"body": "原文"})).unwrap()["id"].as_u64().unwrap();
+    assert!(s.execute("ai.compose", json!({"id": id, "action": "nope"})).is_err());
+    s.execute("ai.compose", json!({"id": id, "action": "shorter"})).unwrap();
+    s.wait_idle(WAIT);
+    let c = s.compose(id).unwrap();
+    assert_eq!(c.ai_error.as_deref(), Some("AI service error (HTTP 401)"));
+    assert_eq!(c.body, "原文");
+    s.execute("ai.dismiss", json!({"id": id})).unwrap();
+    assert!(s.compose(id).unwrap().ai_error.is_none());
+}
+
+/// 快速回复起草：结果带邮件键和序号；正文还没下载时先下载并报错。
+#[test]
+fn ai_quick_reply() {
+    let (mut s, _f, _d) = setup();
+    with_ai(&mut s, Ok("收到，谢谢！"));
+    let key = s.view().messages.iter().find(|m| m.subject == "Hello").unwrap().key.clone();
+    let e = s.execute("ai.quickReply", json!({"key": key.to_string()})).unwrap_err().to_string();
+    assert!(e.contains("downloading"), "{e}");
+    s.wait_idle(WAIT);
+    s.execute("ai.quickReply", json!({"key": key.to_string(), "instruction": "表示感谢"})).unwrap();
+    s.wait_idle(WAIT);
+    let st = s.execute("ai.status", json!({})).unwrap();
+    assert_eq!(st["busy"], false);
+    assert_eq!(st["reply"]["key"], key.to_string());
+    assert_eq!(st["reply"]["text"], "收到，谢谢！");
+    assert_eq!(st["reply"]["seq"], 1);
+    s.execute("ai.clearReply", json!({})).unwrap();
+    assert!(s.ai_reply().is_none());
+}
+
+/// 自己写的部分到签名、转发头或回复引用头为止。
+#[test]
+fn ai_own_part() {
+    use crate::cmd::ai_own_end as own_end;
+    let b = "你好\n\n-- \n签名";
+    assert_eq!(b.get(..own_end(b, false)), Some("你好\n\n"));
+    let b = "正文\n\n在 2026-01-01，A 写道：\n> 原文";
+    assert_eq!(b.get(..own_end(b, true)), Some("正文\n\n"));
+    assert_eq!(own_end(b, false), b.len());
+    let b = "看看这个\n\n---------- 转发的邮件 ----------\n发件人：x";
+    assert_eq!(b.get(..own_end(b, false)), Some("看看这个\n\n"));
+}
+
+// ---------------------------------------------------------------- 发票
+
+/// 发票范围只列发票邮件，侧边栏有未读数。
+#[test]
+fn invoice_scope() {
+    let (mut s, _f, _d) = setup();
+    assert_eq!(s.unread(&Scope::Invoices), 1);
+    s.execute("view.scope", json!({"kind": "invoices"})).unwrap();
+    let subjects: Vec<&str> = s.view().messages.iter().map(|m| m.subject.as_str()).collect();
+    assert_eq!(subjects, vec!["Invoice 42"]);
+    assert_eq!(s.execute("invoice.list", json!({})).unwrap()["total"], 1);
+}
+
+/// 一键导出：正文不在本地的先下载；写清单（金额、文件）；PNG 不算发票文件。
+#[test]
+fn invoice_export_downloads_and_writes_csv() {
+    let fake = FakeConnector::empty("pw");
+    let raw = "From: 星河科技财务 <finance@xh.example>\r\nTo: me@example.com\r\nSubject: =?utf-8?B?55S15a2Q5Y+R56Wo?=\r\nDate: Mon, 05 Oct 2026 08:00:00 +0000\r\n\
+Message-ID: <inv1@xh.example>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n金额：¥1,280.00 下载 https://fp.xh.example/download/1.pdf\r\n\
+--b\r\nContent-Type: application/pdf; name=\"fp.pdf\"\r\nContent-Disposition: attachment; filename=\"fp.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQ=\r\n\
+--b\r\nContent-Type: image/png; name=\"qr.png\"\r\nContent-Disposition: attachment; filename=\"qr.png\"\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--b--\r\n";
+    fake.deliver("INBOX", raw.as_bytes().to_vec());
+    fake.deliver("INBOX", mail("Alice <alice@x.com>", ME, "Hello", "hi", 1));
+    let (mut s, _d) = bare(&fake);
+    s.prefs.prefetch = 0;
+    s.execute("account.add", json!({"email": ME, "password": "pw", "verify": false})).unwrap();
+    s.wait_idle(WAIT);
+    let out = tempfile::tempdir().unwrap();
+    let dir = out.path().join("发票");
+    let r = s.execute("invoice.export", json!({"dir": dir.to_string_lossy()})).unwrap();
+    assert_eq!(r["total"], 1);
+    s.wait_idle(WAIT);
+    let st = s.invoice_export().clone();
+    assert!(!st.busy, "{st:?}");
+    assert_eq!((st.done, st.files), (1, 1), "{st:?}");
+    assert!(st.failed.is_empty(), "{st:?}");
+    let files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(files.iter().any(|f| f.ends_with("_星河科技财务_fp.pdf")), "{files:?}");
+    assert!(!files.iter().any(|f| f.ends_with(".png")), "{files:?}");
+    let csv = std::fs::read_to_string(dir.join("发票清单.csv")).unwrap();
+    assert!(csv.starts_with('\u{feff}'));
+    assert!(csv.contains("1280.00") && csv.contains("电子发票") && csv.contains("https://fp.xh.example/download/1.pdf"), "{csv}");
+    assert!(s.take_ui_requests().iter().any(|r| matches!(r, UiRequest::Toast(t) if t.contains("发票导出完成"))));
+    // 再导出一次：同名同内容不产生副本
+    s.execute("invoice.export", json!({"dir": dir.to_string_lossy()})).unwrap();
+    s.wait_idle(WAIT);
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+}
+
+/// 演示数据里的电子发票可以直接导出。
+#[test]
+fn invoice_export_demo() {
+    let mut s = Session::demo().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    s.execute("invoice.export", json!({"dir": out.path().to_string_lossy()})).unwrap();
+    s.wait_idle(WAIT);
+    let st = s.invoice_export();
+    assert!(!st.busy && st.files >= 1 && st.csv.is_some(), "{st:?}");
+}

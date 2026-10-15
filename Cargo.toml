@@ -18,6 +18,7 @@ mailfabrica-proto = { path = "crates/proto" }
 mailfabrica-store = { path = "crates/store" }
 mailfabrica-sync = { path = "crates/sync" }
 mailfabrica-update = { path = "crates/update" }
+mailfabrica-ai = { path = "crates/ai" }
 mailfabrica-html = { path = "crates/html" }
 mailfabrica-engine = { path = "crates/engine" }
 mailfabrica-ui-egui = { path = "crates/ui-egui" }

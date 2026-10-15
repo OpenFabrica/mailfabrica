@@ -43,6 +43,7 @@ pub fn scope_name(app: &MailApp, scope: &Scope) -> String {
         Scope::AllInboxes => lang.t("All Inboxes").into(),
         Scope::Unread => lang.t("Unread").into(),
         Scope::Flagged => lang.t("Flagged").into(),
+        Scope::Invoices => lang.t("Invoices").into(),
         Scope::Folder { account, folder } => {
             let name =
                 app.session.folders(account).iter().find(|f| f.path == *folder).map(|f| folder_name(lang, f)).unwrap_or_else(|| folder.clone());
@@ -112,6 +113,7 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             (Scope::AllInboxes, Icon::AllInboxes, lang.t("All Inboxes"), "allInboxes"),
             (Scope::Unread, Icon::Unread, lang.t("Unread"), "unread"),
             (Scope::Flagged, Icon::Flag, lang.t("Flagged"), "flagged"),
+            (Scope::Invoices, Icon::Receipt, lang.t("Invoices"), "invoices"),
         ] {
             let n = app.session.unread(&s);
             let r = item(ui, icon, name, 0.0, n, scope == s, true);
@@ -119,6 +121,13 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             if r.clicked() {
                 app.defer("view.scope", json!({"kind": key}));
                 app.list.scroll_to_top = true;
+            }
+            if s == Scope::Invoices {
+                r.context_menu(|ui| {
+                    if ui.button(lang.t("Export Invoices…")).clicked() {
+                        app.defer("ui.exportInvoices", json!({}));
+                    }
+                });
             }
         }
         ui.add_space(8.0);

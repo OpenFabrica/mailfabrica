@@ -2511,6 +2511,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailfabrica-ai"
+version = "0.1.3-dev"
+dependencies = [
+ "rustls",
+ "serde",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "mailfabrica-brand"
 version = "0.1.3-dev"
 dependencies = [
@@ -2543,6 +2553,7 @@ version = "0.1.3-dev"
 dependencies = [
  "keyring",
  "log",
+ "mailfabrica-ai",
  "mailfabrica-core",
  "mailfabrica-mime",
  "mailfabrica-rich",

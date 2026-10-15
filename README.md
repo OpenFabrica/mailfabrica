@@ -30,6 +30,9 @@ The screenshots come from demo mode (`--demo`); all accounts and messages in the
 - **Local storage**: one directory per account with a JSON index, the original `.eml` files and the address book; readable offline.
 - **HTML mail**: laid out with blitz and rendered on the CPU, so CSS layout, buttons and images look as designed; remote images are loaded only from public internet addresses.
 - **Group by subject**: messages with the same subject (ignoring prefixes like `Re:`, `Fwd:`, `回复：`) share one row; turn it off from the list menu or in Settings.
+- **AI writing assistant**: in a compose window, write a draft or rewrite your text (polish, more formal, friendlier, shorter, longer, translate). The result is a suggestion you accept (replace or append) or dismiss; only your own text is changed, never the signature or the quoted original. On replies and forwards the original message is given to the AI as context.
+- **AI quick reply**: drafts a short reply to the open message and fills the quick-reply box under the reading pane.
+- **One-click invoice export**: the "Invoices" virtual folder in the sidebar lists invoice emails from all accounts. Export saves the invoice attachments (pdf/ofd/xml/zip) as `date_sender_originalname` and writes `invoices.csv` (date, sender, subject, amount, files, download links found in the body).
 - **Chinese and English UI, light and dark themes**.
 - **Scriptable**: every action is a command, callable from the control channel, the command line and MCP.
 
@@ -47,6 +50,13 @@ cargo run -p mailfabrica-cli -- account add me@qq.com --password-stdin
 cargo run -p mailfabrica-cli -- sync && cargo run -p mailfabrica-cli -- list --unread
 ```
 For QQ, 163, 126 and similar providers, first turn on IMAP/SMTP in the webmail settings and use the **authorization code** instead of your login password. For Gmail, use an app password.
+
+## AI assistant setup
+The AI features are off until you configure a service in **Settings**:
+- **Anthropic** (default): URL `https://api.anthropic.com`, model `claude-opus-5-5`. Only the API key is needed.
+- **OpenAI-compatible**: any Chat Completions endpoint (DeepSeek, Qwen/DashScope, Ollama, ...). URL and model are required.
+
+The API key is kept in the system keychain (the same place as mail passwords) and never written to `prefs.json`. The URL must be `https`; plain `http` is allowed only for localhost (for example Ollama). Email content is sent to the configured AI service only when you click an AI action.
 
 Command line: `docs/cli.md`. MCP: `docs/mcp.md`. Control channel: `docs/control-protocol.md`. (These documents are in Chinese.)
 

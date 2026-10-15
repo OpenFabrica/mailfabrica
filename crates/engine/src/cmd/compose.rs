@@ -388,7 +388,7 @@ impl Session {
     }
 
     /// 可变地取写信窗口。
-    fn compose_mut(&mut self, cmd: &str, id: u64) -> Result<&mut Compose> {
+    pub(crate) fn compose_mut(&mut self, cmd: &str, id: u64) -> Result<&mut Compose> {
         self.composes.iter_mut().find(|c| c.id == id).ok_or_else(|| bad(cmd, format!("no compose window {id}")))
     }
 }
@@ -564,7 +564,7 @@ fn inline_parts(view: &MessageView, raw: &[u8], html: &str) -> Vec<ComposeAttach
 
 impl Compose {
     /// 用整段新文字更新正文：超文本模式下保留格式（`replace_text`），纯文本模式下文档跟着重建。
-    fn replace_body(&mut self, text: &str, insert_style: Option<&InlineStyle>) {
+    pub(crate) fn replace_body(&mut self, text: &str, insert_style: Option<&InlineStyle>) {
         if self.rich {
             self.doc.replace_text(text, insert_style);
             self.body = self.doc.text().to_string();

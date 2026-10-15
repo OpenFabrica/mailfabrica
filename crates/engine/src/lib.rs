@@ -6,12 +6,17 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod ai;
 pub mod cmd;
 mod events;
 mod i18n;
+mod invoice;
 pub mod secrets;
 mod updates;
 mod view;
+pub use ai::AiReply;
+pub use invoice::{InvoiceExport, invoice_attachments, is_invoice};
+pub use mailfabrica_ai as assist;
 pub use updates::{UpdatePhase, UpdateState};
 
 use std::collections::{HashMap, HashSet};
@@ -79,6 +84,12 @@ pub struct Prefs {
     pub compose_rich: bool,
     /// 邮件列表按主题归类：主题相同（去掉回复/转发前缀后）的邮件合成一行（学 Foxmail）。
     pub group_by_subject: bool,
+    /// AI 助手接口协议：`anthropic`（默认）或 `openai`（OpenAI 兼容）。密钥不在这里，在密码存储里。
+    pub ai_provider: String,
+    /// AI 助手接口地址，空 = 协议默认（只有 `anthropic` 有默认地址）。
+    pub ai_base_url: String,
+    /// AI 助手模型 id，空 = 协议默认（`anthropic` 为 `claude-opus-5-5`）。
+    pub ai_model: String,
 }
 
 impl Default for Prefs {
@@ -94,6 +105,9 @@ impl Default for Prefs {
             language: "zh-CN".into(),
             compose_rich: true,
             group_by_subject: true,
+            ai_provider: "anthropic".into(),
+            ai_base_url: String::new(),
+            ai_model: String::new(),
         }
     }
 }
@@ -111,6 +125,8 @@ pub enum Scope {
     Unread,
     /// 所有账户里的红旗邮件。
     Flagged,
+    /// 所有账户里的发票邮件（见 `invoice::is_invoice`）。
+    Invoices,
 }
 
 /// 邮件列表视图：范围 + 搜索词 + 结果 + 选择。
@@ -248,6 +264,12 @@ pub struct Compose {
     pub error: Option<String>,
     /// 有未保存的修改。
     pub dirty: bool,
+    /// AI 助手正在生成。
+    pub ai_busy: bool,
+    /// AI 助手生成的建议正文，等用户 `ai.accept` 采用或 `ai.dismiss` 放弃。
+    pub ai_suggestion: Option<String>,
+    /// 上次 AI 生成失败的原因。
+    pub ai_error: Option<String>,
 }
 
 /// 状态栏信息。
@@ -319,6 +341,8 @@ pub struct Session {
     secrets: Arc<dyn SecretStore>,
     worker: Worker,
     updates: updates::Updates,
+    ai: ai::Ai,
+    invoices: invoice::Exporter,
     view: MailView,
     bodies: HashMap<MsgKey, BodyState>,
     composes: Vec<Compose>,
@@ -335,6 +359,8 @@ pub struct Session {
     draft_ids: HashMap<u64, (String, String)>,
     /// 红旗邮件里的未读数（侧边栏角标），存储变化后重算。
     flagged_unread: u32,
+    /// 发票邮件里的未读数（侧边栏角标），和 `flagged_unread` 一起重算。
+    invoice_unread: u32,
     counts_dirty: bool,
     /// 上次自动收取的时间；`None` = 还没收过（第一次 `pump` 就收）。
     last_auto_sync: Option<Instant>,
@@ -356,6 +382,8 @@ impl Session {
             secrets,
             worker: Worker::new(connector),
             updates: updates::Updates::new(Arc::new(mailfabrica_update::GitHub)),
+            ai: ai::Ai::new(Arc::new(mailfabrica_ai::Http)),
+            invoices: invoice::Exporter::default(),
             view: MailView::default(),
             bodies: HashMap::new(),
             composes: Vec::new(),
@@ -367,6 +395,7 @@ impl Session {
             awaiting: HashMap::new(),
             draft_ids: HashMap::new(),
             flagged_unread: 0,
+            invoice_unread: 0,
             counts_dirty: true,
             last_auto_sync: None,
             _tmp: None,
@@ -451,7 +480,7 @@ impl Session {
     /// 处理后台事件，写入存储，刷新视图；并按 `sync_interval_minutes` 触发自动收取。
     /// 有变化时返回 true（界面需要重绘）。每帧调用一次，开销要小。
     pub fn pump(&mut self) -> bool {
-        let update_changed = self.pump_updates();
+        let update_changed = self.pump_updates() | self.pump_ai();
         let events = self.worker.poll();
         let mut changed = !events.is_empty() && self.apply_events(events);
         let interval = u64::from(self.prefs.sync_interval_minutes) * 60;
@@ -479,7 +508,8 @@ impl Session {
                 self.apply_events(events);
             }
             self.pump_updates();
-            if (self.worker.busy_accounts().is_empty() && !self.update().busy()) || Instant::now() >= deadline {
+            self.wait_ai(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50)));
+            if (self.worker.busy_accounts().is_empty() && !self.update().busy() && !self.ai_busy()) || Instant::now() >= deadline {
                 break;
             }
             if self.update().busy() {
@@ -519,6 +549,7 @@ impl Session {
                 .filter(view::counts_as_mail)
                 .fold(0u32, |n, f| n.saturating_add(f.unread)),
             Scope::Flagged => self.flagged_unread,
+            Scope::Invoices => self.invoice_unread,
         }
     }
 
@@ -679,6 +710,14 @@ impl Session {
             }
         }
         self.flagged_unread = n;
+        let mut n = 0u32;
+        for a in self.account_ids() {
+            for f in self.store.folders(&a).into_iter().filter(invoice::invoice_folder) {
+                let msgs = self.store.messages(&a, &f.path).unwrap_or_default();
+                n = n.saturating_add(u32::try_from(msgs.iter().filter(|m| !m.flags.seen && invoice::is_invoice(m)).count()).unwrap_or(u32::MAX));
+            }
+        }
+        self.invoice_unread = n;
     }
 
     /// 把账户里所有邮件的发件人、收件人、抄送（自己除外）记进地址簿。

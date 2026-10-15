@@ -55,6 +55,11 @@ JSON 配置（`.mcp.json`、Claude Desktop、其他客户端）：
 | `ui_screenshot` | `path?` | 窗口截图（仅远程模式） |
 | `ui_inspect` | — | 界面状态（仅远程模式） |
 
+AI 助手和发票导出没有单独的工具，用 `mail_execute` 调命令：`ai.config`（设置服务和密钥）、`ai.compose` / `ai.accept` / `ai.dismiss`（写信助手）、
+`ai.quickReply` / `ai.clearReply` / `ai.status`（快速回复）、`invoice.list` / `invoice.export` / `invoice.status`（发票）；
+`view.scope` 传 `{"kind": "invoices"}` 切到发票范围。参数见 `mail_commands`。
+`ai.*` 只在用户已配置 AI 服务后可用，调用时邮件内容会发给该服务。
+
 `to`、`cc` 可以是字符串（`"a@b.com, c@d.com"`）或字符串数组。`ui_*` 工具只在远程模式的 `tools/list` 里出现。
 
 结果是一个文本块，内容是美化过的 JSON；失败时 `isError: true` 并带可读的信息。未知工具、缺必填参数、参数类型错误是

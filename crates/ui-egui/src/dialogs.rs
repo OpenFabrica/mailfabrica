@@ -82,6 +82,9 @@ impl Dialog {
                 d.values = p.as_object().cloned().unwrap_or_default();
                 d.values.insert("dark".into(), json!(app.ui.dark));
                 d.values.insert("language".into(), json!(app.ui.language.code()));
+                // 密钥不回显：只记有没有，输入框留空表示不改
+                d.values.insert("aiKey".into(), json!(""));
+                d.values.insert("aiHasKey".into(), json!(app.session.ai_has_key()));
             }
             "contacts" => {
                 for k in ["search", "email", "name"] {
@@ -224,7 +227,11 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
             let interval =
                 d.values.get("syncIntervalMinutes").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(10);
             p.insert("syncIntervalMinutes".into(), json!(interval));
-            app.run("app.prefs", Json::Object(p))
+            let mut ai = json!({"provider": d.s("aiProvider"), "baseUrl": d.s("aiBaseUrl"), "model": d.s("aiModel")});
+            if !d.s("aiKey").trim().is_empty() {
+                ai["apiKey"] = json!(d.s("aiKey").trim());
+            }
+            app.run("app.prefs", Json::Object(p)).and_then(|_| app.run("ai.config", ai))
         }
         "contacts" => {
             let email = d.s("email").trim().to_string();
@@ -727,7 +734,45 @@ fn settings(ui: &mut Ui, d: &mut Dialog, lang: Language) {
             check(ui, d, key, label);
             ui.end_row();
         }
+        ai_settings(ui, d, lang);
     });
+}
+
+/// 设置里的 AI 助手一节：接口类型、地址、模型、密钥（密钥存系统钥匙串，不回显）。
+fn ai_settings(ui: &mut Ui, d: &mut Dialog, lang: Language) {
+    let t = Tokens::get(ui.ctx());
+    let openai = d.s("aiProvider") == "openai";
+    ui.label(egui::RichText::new(lang.t("AI assistant")).color(t.text_dim));
+    let name = |openai: bool| if openai { lang.t("OpenAI-compatible (DeepSeek, Qwen, Ollama…)") } else { "Claude (Anthropic)" };
+    egui::ComboBox::from_id_salt("settings_ai_provider").selected_text(name(openai)).width(260.0).show_ui(ui, |ui| {
+        for (value, is_openai) in [("anthropic", false), ("openai", true)] {
+            if ui.selectable_label(openai == is_openai, name(is_openai)).clicked() && openai != is_openai {
+                d.values.insert("aiProvider".into(), json!(value));
+                // 换了接口类型，原来的地址和模型多半不适用
+                d.values.insert("aiBaseUrl".into(), json!(""));
+                d.values.insert("aiModel".into(), json!(""));
+            }
+        }
+    });
+    ui.end_row();
+    let (url_hint, model_hint) =
+        if openai { ("https://api.deepseek.com", "deepseek-chat") } else { ("https://api.anthropic.com", "claude-opus-5-5") };
+    text_row(ui, d, "aiBaseUrl", lang.t("Service URL"), false, url_hint);
+    text_row(ui, d, "aiModel", lang.t("Model"), false, model_hint);
+    let key_hint = if d.b("aiHasKey") { lang.t("Saved; leave empty to keep it") } else { "sk-…" };
+    text_row(ui, d, "aiKey", lang.t("API key"), true, key_hint);
+    ui.label("");
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(
+                lang.t("Message content is sent to this service only when you click an AI button. The key is kept in the system keychain."),
+            )
+            .size(12.0)
+            .color(t.text_faint),
+        )
+        .wrap(),
+    );
+    ui.end_row();
 }
 
 /// 布尔字段的复选框。

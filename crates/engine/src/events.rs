@@ -141,6 +141,7 @@ impl Session {
                 if waiting {
                     self.fill_waiting(&key);
                 }
+                self.invoice_body_arrived(&key);
                 // 只更新这一行的预览，不必重建整个列表
                 if let Some(meta) = self.store.meta(&key)
                     && let Some(m) = self.view.messages.iter_mut().find(|m| m.key == key)
@@ -218,6 +219,7 @@ impl Session {
             }
             (Action::Body(key), Err(e)) => {
                 self.bodies.insert(key.clone(), BodyState::Failed(e.to_string()));
+                self.invoice_body_failed(&key, &e.to_string());
                 // 正文拿不到了，等它的写信窗口就保持现状
                 self.awaiting.retain(|_, a| a.key != key);
                 false
@@ -225,8 +227,9 @@ impl Session {
             (Action::Body(key), Ok(_)) => {
                 // 下载成功但没收到原文（服务器上已没有这封）：不要一直显示"加载中"
                 if matches!(self.bodies.get(&key), Some(BodyState::Loading)) {
-                    self.bodies.insert(key, BodyState::Failed("message not found on the server".into()));
+                    self.bodies.insert(key.clone(), BodyState::Failed("message not found on the server".into()));
                 }
+                self.invoice_body_failed(&key, "message not found on the server");
                 false
             }
             (Action::AddAccount { account: acc, password }, Ok(_)) => {

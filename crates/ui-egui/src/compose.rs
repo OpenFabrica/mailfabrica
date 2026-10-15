@@ -98,6 +98,10 @@ struct Edit {
     ids: Vec<egui::Id>,
     /// 正文的选区、待用样式、格式弹窗（超文本和纯文本模式都记选区）。
     rich: RichState,
+    /// AI 助手条是否展开。
+    ai_open: bool,
+    /// AI 助手条里输入的要求。
+    ai_input: String,
 }
 
 /// 需要确认的操作。
@@ -335,6 +339,13 @@ fn body(app: &mut MailApp, ui: &mut Ui, c: &Compose, focus_now: bool) {
             if r.clicked() {
                 app.defer("ui.attachFiles", json!({"id": id}));
             }
+            let r = widgets::icon_text_button(ui, Icon::Sparkle, lang.t("AI Write"), t.accent, 13.0);
+            app.target(format!("compose.{id}.ai"), r.rect);
+            if r.on_hover_text(lang.t("Let AI write or rework the message")).clicked()
+                && let Some(e) = app.composer.edits.get_mut(&id)
+            {
+                e.ai_open = !e.ai_open;
+            }
             if c.sending {
                 ui.add_space(8.0);
                 ui.add(egui::Spinner::new().size(14.0).color(t.accent));
@@ -363,6 +374,7 @@ fn body(app: &mut MailApp, ui: &mut Ui, c: &Compose, focus_now: bool) {
             });
         });
     }
+    ai_panel(app, ui, c);
     let line = |ui: &mut Ui| {
         let r = ui.max_rect();
         let y = ui.cursor().top();
@@ -505,6 +517,136 @@ fn body(app: &mut MailApp, ui: &mut Ui, c: &Compose, focus_now: bool) {
     }
     if let Some(e) = app.composer.edits.get_mut(&id) {
         e.ids = new_ids;
+    }
+}
+
+/// AI 助手的快捷动作：(命令里的动作名, 按钮文字)。
+const AI_ACTIONS: [(&str, &str); 6] = [
+    ("polish", "Polish"),
+    ("formal", "More formal"),
+    ("friendly", "Friendlier"),
+    ("shorter", "Shorter"),
+    ("longer", "Longer"),
+    ("translate", "Translate"),
+];
+
+/// 写信窗口里的 AI 助手条：输入要求后"生成"，或一键润色/改语气/精简/扩写/翻译；生成中显示进度；
+/// 建议到了显示在下面，由用户替换自己写的部分、接在后面或放弃（签名和原文引用始终不动）。
+fn ai_panel(app: &mut MailApp, ui: &mut Ui, c: &Compose) {
+    let id = c.id;
+    let open = app.composer.edits.get(&id).is_some_and(|e| e.ai_open);
+    // 收起时，有结果或错误也要露出来，免得用户看不到
+    if !open && c.ai_suggestion.is_none() && c.ai_error.is_none() && !c.ai_busy {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let lang = app.lang();
+    let mut input = app.composer.edits.get(&id).map(|e| e.ai_input.clone()).unwrap_or_default();
+    let mut cmds: Vec<(&str, serde_json::Value)> = Vec::new();
+    let mut targets: Vec<(String, Rect)> = Vec::new();
+    let mut close = false;
+    egui::Frame::NONE.fill(t.accent.gamma_multiply(0.06)).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+            icons::paint(ui.painter(), r, Icon::Sparkle, t.accent);
+            let fid = egui::Id::new(("compose_ai_input", id));
+            let w = (ui.available_width() - 110.0).max(80.0);
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut input)
+                    .id(fid)
+                    .hint_text(lang.t("Tell AI what to write, e.g. decline Friday's meeting politely and suggest next week"))
+                    .desired_width(w)
+                    .margin(vec2(8.0, 5.0)),
+            );
+            targets.push((format!("compose.{id}.ai.input"), r.rect));
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let can = !c.ai_busy && !input.trim().is_empty();
+            let b = widgets::accent_button(ui, lang.t("Generate"), can);
+            targets.push((format!("compose.{id}.ai.generate"), b.rect));
+            if can && (b.clicked() || enter) {
+                cmds.push(("ai.compose", json!({"id": id, "action": "write", "instruction": input.trim()})));
+            }
+            let x = widgets::icon_button(ui, Icon::Close, lang.t("Close"), 18.0, true);
+            if x.clicked() {
+                close = true;
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (action, label) in AI_ACTIONS {
+                let b = ui.add_enabled(!c.ai_busy, egui::Button::new(egui::RichText::new(lang.t(label)).size(12.5)).corner_radius(12.0));
+                targets.push((format!("compose.{id}.ai.{action}"), b.rect));
+                if b.clicked() {
+                    // 框里的文字作为补充要求（翻译时是目标语言）
+                    cmds.push(("ai.compose", json!({"id": id, "action": action, "instruction": input.trim()})));
+                }
+            }
+            if c.ai_busy {
+                ui.add_space(6.0);
+                ui.add(egui::Spinner::new().size(14.0).color(t.accent));
+                ui.label(egui::RichText::new(lang.t("AI is writing…")).size(12.5).color(t.text_dim));
+            }
+        });
+        if let Some(e) = &c.ai_error {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Warning, t.danger);
+                ui.add(egui::Label::new(egui::RichText::new(crate::clean_error(e)).color(t.danger)).wrap());
+            });
+        }
+        if let Some(sug) = &c.ai_suggestion {
+            ui.add_space(8.0);
+            egui::Frame::NONE
+                .fill(t.input_bg)
+                .stroke(Stroke::new(1.0, t.input_border))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(egui::RichText::new(lang.t("AI suggestion")).size(12.0).color(t.text_faint));
+                    ui.add_space(4.0);
+                    let r = egui::ScrollArea::vertical().id_salt(("compose_ai_suggestion", id)).max_height(180.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(sug).font(theme::ui_font(13.5)).color(t.text)).wrap().selectable(true))
+                    });
+                    targets.push((format!("compose.{id}.ai.suggestion"), r.inner_rect));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let b = widgets::accent_button(ui, lang.t("Replace my text"), true);
+                        targets.push((format!("compose.{id}.ai.replace"), b.rect));
+                        if b.clicked() {
+                            cmds.push(("ai.accept", json!({"id": id, "mode": "replace"})));
+                        }
+                        let b = ui.add(egui::Button::new(lang.t("Insert below my text")).min_size(vec2(0.0, 30.0)));
+                        targets.push((format!("compose.{id}.ai.append"), b.rect));
+                        if b.clicked() {
+                            cmds.push(("ai.accept", json!({"id": id, "mode": "append"})));
+                        }
+                        let b = ui.add(egui::Button::new(lang.t("Discard")).min_size(vec2(0.0, 30.0)));
+                        targets.push((format!("compose.{id}.ai.dismiss"), b.rect));
+                        if b.clicked() {
+                            cmds.push(("ai.dismiss", json!({"id": id})));
+                        }
+                    });
+                });
+        }
+    });
+    if let Some(e) = app.composer.edits.get_mut(&id) {
+        e.ai_input = input;
+        if close {
+            e.ai_open = false;
+        }
+    }
+    if close {
+        app.defer("ai.dismiss", json!({"id": id}));
+    }
+    for (cmd, p) in cmds {
+        app.defer(cmd, p);
+    }
+    for (name, rect) in targets {
+        app.target(name, rect);
     }
 }
 

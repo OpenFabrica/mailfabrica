@@ -59,6 +59,8 @@ pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Vec<String>>>,
     /// 选择保存位置，参数是建议的文件名。
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// 选择一个文件夹（导出发票用）。
+    pub pick_folder: Option<Box<dyn Fn() -> Option<String>>>,
     /// 用系统浏览器打开网址。
     pub open_url: Option<Box<dyn Fn(&str)>>,
 }
@@ -219,6 +221,7 @@ impl MailApp {
             "ui.readerMode" => self.reader_mode(p),
             "ui.saveAttachment" => self.save_attachment(p),
             "ui.attachFiles" => self.attach_files(p),
+            "ui.exportInvoices" => self.export_invoices(p),
             "ui.toggleCollapsed" => {
                 let acc = s("account").unwrap_or_default();
                 if let Some(i) = self.ui.collapsed.iter().position(|a| *a == acc) {
@@ -313,6 +316,23 @@ impl MailApp {
             self.run("compose.attach", json!({"id": id, "path": path}))?;
         }
         Ok(json!({"added": paths.len()}))
+    }
+
+    /// 一键导出发票：`{dir?}`，不给目录时弹文件夹选择框；用户取消就什么都不做。
+    fn export_invoices(&mut self, p: &Json) -> Result<Json, String> {
+        let dir = match p.get("dir").and_then(Json::as_str) {
+            Some(d) => d.to_string(),
+            None => {
+                let Some(pick) = &self.services.pick_folder else { return Err(self.lang().t("No file dialog available").into()) };
+                match pick() {
+                    Some(d) => d,
+                    None => return Ok(Json::Null),
+                }
+            }
+        };
+        let r = self.run("invoice.export", json!({"dir": dir}))?;
+        self.toast = Some((self.lang().t("Exporting invoices…").to_string(), now_ms()));
+        Ok(r)
     }
 
     /// 用系统浏览器打开网址（只允许 http/https/mailto，别的协议不碰）。

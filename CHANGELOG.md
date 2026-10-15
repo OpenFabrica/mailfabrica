@@ -1,5 +1,13 @@
 # 更新日志
 
+## 未发布
+
+- 新增 AI 写信助手：在写信窗口起草或改写正文（润色、更正式、更友好、更短、更长、翻译），结果作为建议由用户采用或放弃，只改自己写的部分。
+- 新增 AI 快速回复：为当前邮件起草简短回复，填入阅读窗格下方的快速回复框。
+- 设置里可配置 AI 服务：Anthropic 或 OpenAI 兼容接口（DeepSeek、通义、Ollama 等）；API 密钥存系统钥匙串，只在点击 AI 操作时才发送邮件内容。
+- 新增侧栏"发票"虚拟文件夹，汇总全部账户的发票邮件；一键导出发票附件并生成 `发票清单.csv`。
+- 新增命令 `ai.config`、`ai.compose`、`ai.accept`、`ai.dismiss`、`ai.quickReply`、`ai.clearReply`、`ai.status`、`invoice.list`、`invoice.export`、`invoice.status`，`view.scope` 增加 `invoices`。
+
 ## 0.1.2 · 2026-10-12 · stable
 
 - 更新下载并验证后自动替换应用、重启，无需手动拖动或覆盖；替换及启动失败时回退，保留邮件数据。

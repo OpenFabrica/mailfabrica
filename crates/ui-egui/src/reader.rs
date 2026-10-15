@@ -28,6 +28,8 @@ use crate::{Language, MailApp};
 pub struct ReaderState {
     /// 快速回复框里的文字。
     pub quick_reply: String,
+    /// 已经填进快速回复框的 AI 草稿序号（`AiReply::seq`），新结果到了才填。
+    ai_seen: u64,
     /// 已经请求下载正文的邮件（避免每帧重复请求）。
     requested: Option<MsgKey>,
     /// 当前邮件纯文本正文切好的段落（邮件键, 正文, 段落）。持有正文的 `Arc`，正文换了（重新下载）就重切。
@@ -662,10 +664,24 @@ fn quick_reply(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, meta: Option<&Messa
             .stroke(Stroke::new(1.0, if focused { t.accent } else { t.input_border }))
             .corner_radius(8.0)
             .inner_margin(egui::Margin { left: 10, right: 8, top: 8, bottom: 8 });
+        // AI 草稿到了（且是这封邮件的新结果）：填进输入框，替换原来的要点
+        let ai = app.session.ai_reply().filter(|r| r.key == key.to_string()).cloned();
+        let ai_busy = ai.as_ref().is_some_and(|r| r.busy);
+        if let Some(r) = ai.filter(|r| !r.busy && r.seq != app.reader.ai_seen) {
+            app.reader.ai_seen = r.seq;
+            if let Some(text) = r.text {
+                app.reader.quick_reply = text;
+                ui.memory_mut(|m| m.request_focus(id));
+            }
+            if let Some(e) = r.error {
+                app.message = Some(crate::clean_error(&e));
+            }
+        }
         frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 let can_send = !app.reader.quick_reply.trim().is_empty();
-                let send_w = 76.0;
+                // 右边放"发送"和"AI 起草"两个按钮
+                let send_w = 76.0 + 104.0;
                 let hint = lang.f("Quick reply to {name}…", &[("name", to.display_name())]);
                 let edit = egui::TextEdit::multiline(&mut app.reader.quick_reply)
                     .id(id)
@@ -683,6 +699,20 @@ fn quick_reply(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, meta: Option<&Messa
                     if can_send && (b.clicked() || send_key) {
                         let text = app.reader.quick_reply.clone();
                         app.defer("ui.quickReply", json!({"key": key.to_string(), "text": text}));
+                    }
+                    ui.add_space(6.0);
+                    if ai_busy {
+                        ui.label(egui::RichText::new(lang.t("AI is writing…")).size(12.5).color(t.text_dim));
+                        ui.add(egui::Spinner::new().size(14.0).color(t.accent));
+                    } else {
+                        let b = widgets::icon_text_button(ui, Icon::Sparkle, lang.t("AI Draft"), t.accent, 13.0);
+                        app.target("reader.quickReply.ai", b.rect);
+                        // 框里已经写了要点：按要点起草；空着就让 AI 写个合适的简短回复
+                        let b = b.on_hover_text(lang.t("Let AI draft a reply; text in the box is used as your points"));
+                        if b.clicked() {
+                            let points = app.reader.quick_reply.trim().to_string();
+                            app.defer("ai.quickReply", json!({"key": key.to_string(), "instruction": points}));
+                        }
                     }
                 });
             });

@@ -56,6 +56,8 @@ const TABLE: &[(&str, &str, &str)] = &[
     ("job.append", "上传邮件", "Uploading the message"),
     ("job.createFolder", "新建文件夹", "Creating the folder"),
     ("job.send", "发送", "Sending"),
+    ("invoiceDone", "发票导出完成：{0} 封邮件，{1} 个发票文件，存到 {2}", "Invoices exported: {0} message(s), {1} file(s) saved to {2}"),
+    ("invoiceFailed", "发票导出失败：{0}", "Invoice export failed: {0}"),
 ];
 
 /// 是否用英文（`en`、`en-US`……），其他都用中文。

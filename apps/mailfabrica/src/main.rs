@@ -134,6 +134,7 @@ fn services() -> Services {
         pick_save: Some(Box::new(|suggested: &str| {
             rfd::FileDialog::new().set_file_name(suggested).save_file().and_then(|p| p.to_str().map(str::to_string))
         })),
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().and_then(|p| p.to_str().map(str::to_string)))),
         open_url: Some(Box::new(|url: &str| {
             let cmd = if cfg!(target_os = "macos") {
                 "open"

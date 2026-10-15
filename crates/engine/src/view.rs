@@ -78,6 +78,11 @@ impl Session {
                 .into_iter()
                 .flat_map(|a| self.store.folders(&a).into_iter().filter(counts_as_mail).map(move |f| (a.clone(), f.path)))
                 .collect(),
+            Scope::Invoices => self
+                .account_ids()
+                .into_iter()
+                .flat_map(|a| self.store.folders(&a).into_iter().filter(crate::invoice::invoice_folder).map(move |f| (a.clone(), f.path)))
+                .collect(),
         }
     }
 
@@ -108,6 +113,7 @@ impl Session {
         match scope {
             Scope::Unread => list.retain(|m| !m.flags.seen || sticky.contains(&m.key)),
             Scope::Flagged => list.retain(|m| m.flags.flagged || sticky.contains(&m.key)),
+            Scope::Invoices => list.retain(crate::invoice::is_invoice),
             _ => {}
         }
         list.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.key.cmp(&a.key)));

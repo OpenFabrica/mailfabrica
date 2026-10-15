@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use egui::{Rect, Sense, Stroke, Ui, pos2, vec2};
 use mailfabrica_engine::date::{self, DateBucket};
-use mailfabrica_engine::{FolderRole, ListRow, MessageMeta, MsgKey};
+use mailfabrica_engine::{FolderRole, ListRow, MessageMeta, MsgKey, Scope};
 use serde_json::json;
 
 use crate::icons::{self, Icon};
@@ -141,7 +141,27 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         let y = r.center().y;
         // 右上角的视图菜单（按主题归类开关）
         let btn = Rect::from_center_size(pos2(r.right() - 24.0, y), vec2(28.0, 28.0));
-        let count_right = btn.left() - 4.0;
+        let mut count_right = btn.left() - 4.0;
+        // 发票范围：视图菜单左边加"导出发票"按钮
+        if scope == Scope::Invoices && count > 0 {
+            let busy = app.session.invoice_export().busy;
+            let label = if busy { lang.t("Exporting invoices…") } else { lang.t("Export Invoices") };
+            let lg = ui.painter().layout_no_wrap(label.to_string(), theme::ui_font(12.5), t.accent);
+            let er = Rect::from_min_max(pos2(count_right - lg.size().x - 34.0, y - 14.0), pos2(count_right, y + 14.0));
+            let resp = ui.interact(er, egui::Id::new("list_export_invoices"), Sense::click());
+            app.target("list.exportInvoices", er);
+            if resp.hovered() && !busy {
+                ui.painter().rect_filled(er, 6.0, t.hover);
+            }
+            let color = if busy { t.text_faint } else { t.accent };
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(er.left() + 15.0, y), vec2(15.0, 15.0)), Icon::Save, color);
+            ui.painter().galley(pos2(er.left() + 27.0, y - lg.size().y / 2.0), lg, color);
+            let resp = resp.on_hover_text(lang.t("Save the invoice files of these messages to a folder, with a CSV list"));
+            if resp.clicked() && !busy {
+                app.defer("ui.exportInvoices", json!({}));
+            }
+            count_right = er.left() - 8.0;
+        }
         let max_w = count_right - ng.size().x - 10.0 - (r.left() + 16.0);
         let g = widgets::elided(ui.painter(), &title, theme::ui_bold(15.0), t.text, max_w);
         ui.painter().galley(pos2(r.left() + 16.0, y - g.size().y / 2.0), g, t.text);

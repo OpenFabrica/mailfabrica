@@ -15,6 +15,7 @@ mailfabrica-rich = { workspace = true }
 mailfabrica-store = { workspace = true }
 mailfabrica-sync = { workspace = true }
 mailfabrica-update = { workspace = true }
+mailfabrica-ai = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

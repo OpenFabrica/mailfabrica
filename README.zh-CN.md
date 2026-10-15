@@ -30,6 +30,9 @@ Rust 原生的桌面邮件客户端。界面和用法借鉴 Foxmail，工程做�
 - **本地存储**：每账户一个目录，JSON 索引 + `.eml` 原文 + 地址簿，离线可读。
 - **HTML 邮件**：用 blitz 排版、CPU 渲染，按原格式显示（CSS 布局、按钮、图片）；远程图片只从公网地址加载。
 - **按主题归类**：同主题（忽略 `Re:`、`Fwd:`、`回复：` 等前缀）的邮件合成一行，可在列表菜单或设置里关闭。
+- **AI 写信助手**：在写信窗口里让 AI 起草正文，或改写自己写的内容（润色、更正式、更友好、更短、更长、翻译）。结果是一条建议，可以采用（替换或接在后面）或放弃；只改自己写的部分，不动签名和原文引用。回复、转发时会把原邮件作为上下文交给 AI。
+- **AI 快速回复**：为当前打开的邮件起草一条简短回复，填进阅读窗格下方的快速回复框。
+- **一键导出发票**：侧栏的虚拟文件夹"发票"列出全部账户里的发票邮件。导出时把发票附件（pdf/ofd/xml/zip）按 `日期_发件人_原名` 存下来，并生成 `发票清单.csv`（日期、发件人、主题、金额、文件、正文里的下载链接）。
 - **中英文界面、浅色/深色主题**。
 - **可编程**：所有操作都是命令，可通过控制通道、命令行、MCP 调用。
 
@@ -47,6 +50,13 @@ cargo run -p mailfabrica-cli -- account add me@qq.com --password-stdin
 cargo run -p mailfabrica-cli -- sync && cargo run -p mailfabrica-cli -- list --unread
 ```
 QQ、163、126 等邮箱要先在网页版设置里开启 IMAP/SMTP，并用 **授权码** 代替登录密码。Gmail 用应用专用密码。
+
+## AI 助手设置
+AI 功能默认关闭，先在 **设置** 里配置一个服务：
+- **Anthropic**（默认）：地址 `https://api.anthropic.com`，模型 `claude-opus-5-5`，只需填 API 密钥。
+- **OpenAI 兼容接口**：任何 Chat Completions 接口（DeepSeek、通义千问/DashScope、Ollama 等），地址和模型必填。
+
+API 密钥存系统钥匙串（和邮箱密码同一处），不会写进 `prefs.json`。地址必须是 `https`；只有本机（localhost，例如 Ollama）可以用 `http`。只有你点了 AI 操作，邮件内容才会发给所配置的 AI 服务。
 
 命令行见 `docs/cli.md`，MCP 见 `docs/mcp.md`，控制通道见 `docs/control-protocol.md`。
 

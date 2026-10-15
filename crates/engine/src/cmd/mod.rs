@@ -11,7 +11,8 @@
 //! - `account.list` (query) — 账户列表（不含密码）。
 //! - `account.detect` (query) — `{email}` → 预设服务器 `{imap:{host,port,security}, smtp:{…}}`。
 //! - `mail.sync` — `{account?}` 收取（不给就收全部账户）。快捷键 F5。
-//! - `view.scope` — `{account, folder}` 或 `{kind: "allInboxes"|"unread"|"flagged"}`，切换列表范围并清空搜索。
+//! - `view.scope` — `{account, folder}` 或 `{kind: "allInboxes"|"unread"|"flagged"|"invoices"}`，切换列表范围并清空搜索。
+//!   `invoices` 是全部账户里的发票邮件（主题/发件人含"发票"、invoice 等，不含已发送和草稿）。
 //! - `view.search` — `{query}`，在当前范围（文件夹范围时为该账户全部文件夹）搜索，空串取消搜索。
 //! - `view.select` — `{key}` 或 `{keys}`，可选 `{extend: true}` 追加/取消；聚焦最后一个并打开（触发正文下载、自动已读）。
 //! - `view.selectGroup` — `{group}`（归类键）、`{subject}`（任意写法的主题，会归一化）或 `{key}`（组里的某封），
@@ -60,6 +61,24 @@
 //! - `contacts.list` (query) — `{query?}`。
 //! - `contacts.add` — `{email, name?}`。
 //! - `contacts.remove` — `{email}`。
+//! - `ai.config` — `{provider?: "anthropic"|"openai", baseUrl?, model?, apiKey?}` 设置 AI 助手接口；`apiKey` 存进密码存储，
+//!   空串删除。返回 `{provider, baseUrl, model, effectiveUrl, effectiveModel, hasKey, ready}`（不含密钥）。
+//!   `anthropic` 默认地址 `https://api.anthropic.com`、模型 `claude-opus-5-5`；`openai` 是 OpenAI 兼容接口（DeepSeek、通义、Ollama…），
+//!   地址和模型必填。地址只允许 https，本机（localhost）可用 http。
+//! - `ai.compose` — `{id, action?: "write"|"polish"|"formal"|"friendly"|"shorter"|"longer"|"translate", instruction?}`
+//!   后台生成建议正文，放进写信窗口的 `aiSuggestion`（`aiBusy` 期间为 true，失败写 `aiError`）。只改写签名和原文引用之前
+//!   用户自己写的部分；回复/转发时把原邮件作为上下文。`write` 且草稿为空时 `instruction` 必填；其他动作需要草稿。
+//! - `ai.accept` — `{id, mode?: "replace"|"append"}` 采用建议：替换自己写的部分（默认）或接在后面，签名和引用不动。
+//! - `ai.dismiss` — `{id}` 放弃建议、清掉错误。
+//! - `ai.quickReply` — `{key?, instruction?}` 为邮件（默认聚焦的）起草快速回复，结果在 `ai.status` 的 `reply`
+//!   `{key, seq, busy, text?, error?}`；正文还没下载时先下载并返回错误（稍后重试）。
+//! - `ai.clearReply` — `{}` 清掉快速回复草稿。
+//! - `ai.status` (query) — `ai.config` 的内容 + `busy` + `reply`。
+//! - `invoice.list` (query) — `{}` → `{total, messages}` 全部发票邮件。
+//! - `invoice.export` — `{dir, keys?}` 一键导出：发票邮件（默认全部，或 `keys`）里的发票附件（pdf/ofd/xml/zip，
+//!   或名字含"发票"/invoice）存到 `dir`，文件名 `日期_发件人_原名`；写清单 `发票清单.csv`（英文界面 `invoices.csv`，
+//!   含日期、发件人、主题、金额、文件、正文里的下载链接）。正文不在本地的先下载，进度用 `invoice.status` 查。
+//! - `invoice.status` (query) — `{busy, dir, total, done, files, failed, csv?, error?}`。
 //! - `update.check` — `{}` 检查 GitHub 稳定版；异步结果用 `update.status` 查询。
 //! - `update.download` — `{}` 下载可用更新，验证后请求打开安装器。
 //! - `update.open` — `{}` 重新验证并打开已下载的安装器。
@@ -69,11 +88,16 @@
 //! - `app.dialog` — `{name}` 请求打开对话框（`settings`、`contacts`、`about`）。
 
 mod account;
+mod ai;
 mod app;
 pub(crate) mod compose;
+mod invoice;
 mod mail;
 mod message;
 mod update;
+
+#[cfg(test)]
+pub(crate) use ai::own_end as ai_own_end;
 
 use mailfabrica_core::MsgKey;
 use serde::Serialize;
@@ -140,6 +164,8 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(compose::specs());
         v.extend(app::specs());
         v.extend(update::specs());
+        v.extend(ai::specs());
+        v.extend(invoice::specs());
         v
     })
 }

@@ -12,7 +12,7 @@ use crate::{EngineError, Result, Scope, Session};
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!("mail.sync", "Get Mail", ["Mail"], Some("F5"), "{account?}", has_account, sync),
-        cmd!("view.scope", "Show Folder", [], None, "{account, folder} | {kind: \"allInboxes\"|\"unread\"|\"flagged\"}", always, scope),
+        cmd!("view.scope", "Show Folder", [], None, "{account, folder} | {kind: \"allInboxes\"|\"unread\"|\"flagged\"|\"invoices\"}", always, scope),
         cmd!("view.search", "Search", ["View"], None, "{query}", always, search),
         cmd!("view.select", "Select Messages", [], None, "{key} | {keys}, extend?", always, select),
         cmd!("view.selectGroup", "Show Subject Group", [], None, "{group} | {subject} | {key}", has_messages, select_group),
@@ -71,6 +71,7 @@ fn scope(s: &mut Session, p: &Json) -> Result<Json> {
             "allInboxes" => Scope::AllInboxes,
             "unread" => Scope::Unread,
             "flagged" => Scope::Flagged,
+            "invoices" => Scope::Invoices,
             "folder" => return Err(bad(CMD, "`account` and `folder` are required for a folder scope")),
             other => return Err(bad(CMD, format!("unknown scope kind `{other}`"))),
         },
