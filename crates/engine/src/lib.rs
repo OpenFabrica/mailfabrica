@@ -15,7 +15,7 @@ pub mod secrets;
 mod updates;
 mod view;
 pub use ai::AiReply;
-pub use invoice::{InvoiceExport, invoice_attachments, is_invoice};
+pub use invoice::{InvoiceExport, InvoiceRange, invoice_attachments, invoice_range, is_invoice};
 pub use mailfabrica_ai as assist;
 pub use updates::{UpdatePhase, UpdateState};
 

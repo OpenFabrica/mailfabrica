@@ -74,8 +74,10 @@
 //!   `{key, seq, busy, text?, error?}`；正文还没下载时先下载并返回错误（稍后重试）。
 //! - `ai.clearReply` — `{}` 清掉快速回复草稿。
 //! - `ai.status` (query) — `ai.config` 的内容 + `busy` + `reply`。
-//! - `invoice.list` (query) — `{}` → `{total, messages}` 全部发票邮件。
-//! - `invoice.export` — `{dir, keys?}` 一键导出：发票邮件（默认全部，或 `keys`）里的发票附件（pdf/ofd/xml/zip，
+//! - `invoice.list` (query) — `{since?, until?}` → `{total, messages}` 发票邮件（最新的在前）。`since` / `until` 是
+//!   `YYYY-MM-DD`（本地时区，两头都含当天），省略 = 不限。
+//! - `invoice.export` — `{dir, keys?, since?, until?}` 一键导出：发票邮件（`keys` 指定的那些；没给 `keys` 时是日期范围内的全部）
+//!   里的发票附件（pdf/ofd/xml/zip，
 //!   或名字含"发票"/invoice）存到 `dir`，文件名 `日期_发件人_原名`；写清单 `发票清单.csv`（英文界面 `invoices.csv`，
 //!   含日期、发件人、主题、金额、文件、正文里的下载链接）。正文不在本地的先下载，进度用 `invoice.status` 查。
 //! - `invoice.status` (query) — `{busy, dir, total, done, files, failed, csv?, error?}`。

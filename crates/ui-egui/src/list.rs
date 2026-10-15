@@ -156,7 +156,7 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             let color = if busy { t.text_faint } else { t.accent };
             icons::paint(ui.painter(), Rect::from_center_size(pos2(er.left() + 15.0, y), vec2(15.0, 15.0)), Icon::Save, color);
             ui.painter().galley(pos2(er.left() + 27.0, y - lg.size().y / 2.0), lg, color);
-            let resp = resp.on_hover_text(lang.t("Save the invoice files of these messages to a folder, with a CSV list"));
+            let resp = resp.on_hover_text(lang.t("Choose a date range and messages, then save their invoice files to a folder with a CSV list"));
             if resp.clicked() && !busy {
                 app.defer("ui.exportInvoices", json!({}));
             }

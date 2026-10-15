@@ -1328,6 +1328,31 @@ fn invoice_scope() {
     assert_eq!(s.execute("invoice.list", json!({})).unwrap()["total"], 1);
 }
 
+/// 按日期范围列发票邮件：两头都含当天；日期格式不对、起点晚于终点时报错；导出也认同样的范围。
+#[test]
+fn invoice_list_by_date() {
+    let fake = FakeConnector::empty("pw");
+    fake.deliver("INBOX", mail("Billing <billing@a.com>", ME, "Invoice old", "x", 40));
+    fake.deliver("INBOX", mail("Billing <billing@a.com>", ME, "Invoice new", "x", 2));
+    let (mut s, _d) = bare(&fake);
+    s.prefs.prefetch = 0;
+    s.execute("account.add", json!({"email": ME, "password": "pw", "verify": false})).unwrap();
+    s.wait_idle(WAIT);
+    let day = |n| date::date(date::local_ts(n, 8, 0));
+    let subjects = |r: Json| r["messages"].as_array().unwrap().iter().map(|m| m["subject"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(subjects(s.execute("invoice.list", json!({})).unwrap()), vec!["Invoice new", "Invoice old"]);
+    assert_eq!(subjects(s.execute("invoice.list", json!({"since": day(10)})).unwrap()), vec!["Invoice new"]);
+    assert_eq!(subjects(s.execute("invoice.list", json!({"until": day(10)})).unwrap()), vec!["Invoice old"]);
+    // 两头都含当天
+    assert_eq!(subjects(s.execute("invoice.list", json!({"since": day(40), "until": day(40)})).unwrap()), vec!["Invoice old"]);
+    assert!(s.execute("invoice.list", json!({"since": "2026/10/01"})).is_err());
+    assert!(s.execute("invoice.list", json!({"since": day(1), "until": day(5)})).is_err());
+    let out = tempfile::tempdir().unwrap();
+    let r = s.execute("invoice.export", json!({"dir": out.path().to_string_lossy(), "since": day(10)})).unwrap();
+    assert_eq!(r["total"], 1);
+    s.wait_idle(WAIT);
+}
+
 /// 一键导出：正文不在本地的先下载；写清单（金额、文件）；PNG 不算发票文件。
 #[test]
 fn invoice_export_downloads_and_writes_csv() {

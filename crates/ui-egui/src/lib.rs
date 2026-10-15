@@ -318,19 +318,14 @@ impl MailApp {
         Ok(json!({"added": paths.len()}))
     }
 
-    /// 一键导出发票：`{dir?}`，不给目录时弹文件夹选择框；用户取消就什么都不做。
+    /// 导出发票：`{dir?, keys?, since?, until?, range?}`。不给目录时打开导出对话框（选日期范围、勾选邮件，
+    /// 初始值取这些参数）；给了目录就直接按参数导出（控制通道、脚本用）。
     fn export_invoices(&mut self, p: &Json) -> Result<Json, String> {
-        let dir = match p.get("dir").and_then(Json::as_str) {
-            Some(d) => d.to_string(),
-            None => {
-                let Some(pick) = &self.services.pick_folder else { return Err(self.lang().t("No file dialog available").into()) };
-                match pick() {
-                    Some(d) => d,
-                    None => return Ok(Json::Null),
-                }
-            }
-        };
-        let r = self.run("invoice.export", json!({"dir": dir}))?;
+        if p.get("dir").and_then(Json::as_str).is_none() {
+            self.open_dialog("invoiceExport", p.clone());
+            return Ok(Json::Null);
+        }
+        let r = self.run("invoice.export", p.clone())?;
         self.toast = Some((self.lang().t("Exporting invoices…").to_string(), now_ms()));
         Ok(r)
     }

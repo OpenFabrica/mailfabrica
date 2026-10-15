@@ -1,9 +1,13 @@
-//! 对话框：添加账户（先选邮箱类型，再填邮箱密码）、账户设置、设置、地址簿、关于。
+//! 对话框：添加账户（先选邮箱类型，再填邮箱密码）、账户设置、设置、地址簿、导出发票、关于。
 //!
 //! 每个对话框的输入都放在 `values`（JSON 字段）里，所以控制通道可以直接驱动：
 //! `ui.dialog {name}` 打开，`ui.dialog.set {field, value}` 改字段，`ui.dialog.confirm` 按确定。
 
+use std::collections::HashSet;
+
 use egui::{Rect, Sense, Ui, vec2};
+use mailfabrica_engine::core::date;
+use mailfabrica_engine::{InvoiceRange, MessageMeta};
 use serde_json::{Map, Value as Json, json};
 
 use crate::brands;
@@ -15,7 +19,7 @@ use crate::{Language, MailApp};
 /// 打开的对话框。
 #[derive(Clone, Debug)]
 pub struct Dialog {
-    /// `accountAdd`、`accountEdit`、`settings`、`contacts`、`about`。
+    /// `accountAdd`、`accountEdit`、`settings`、`contacts`、`invoiceExport`、`about`。
     pub name: String,
     /// 表单字段。
     pub values: Map<String, Json>,
@@ -35,7 +39,20 @@ pub struct Dialog {
     pub focus_password: bool,
     /// 已经按它预填过服务器的邮箱类型 id（`provider` 字段变了就重新预填）。
     applied_provider: String,
+    /// 导出发票：上次扫描用的日期范围和扫出的发票邮件（范围不变就不重新扫描）。
+    invoices: Option<(InvoiceRange, Vec<MessageMeta>)>,
 }
+
+/// 导出发票的日期范围选项：(值, 显示名键)。值是 `date::range_preset` 认的名字，`custom` 表示手填日期。
+const RANGES: [(&str, &str); 7] = [
+    ("all", "All dates"),
+    ("thisMonth", "This month"),
+    ("lastMonth", "Last month"),
+    ("last3Months", "Last 3 months"),
+    ("thisYear", "This year"),
+    ("lastYear", "Last year"),
+    ("custom", "Custom"),
+];
 
 /// 加密方式选项：(值, 显示名键)。
 const SECURITY: [(&str, &str); 3] = [("tls", "SSL/TLS"), ("starttls", "STARTTLS"), ("none", "None (insecure)")];
@@ -58,6 +75,7 @@ impl Dialog {
             verifying: None,
             focus_password: false,
             applied_provider: String::new(),
+            invoices: None,
         };
         match name {
             "accountAdd" => {
@@ -90,6 +108,17 @@ impl Dialog {
                 for k in ["search", "email", "name"] {
                     d.values.insert(k.into(), init.get(k).cloned().unwrap_or(json!("")));
                 }
+            }
+            "invoiceExport" => {
+                // 默认全部时间；`since` / `until` 给了就按手填日期
+                let range = init.get("range").and_then(Json::as_str).unwrap_or("all");
+                let (since, until) = date::range_preset(range, date::now()).unwrap_or_default();
+                let custom = init.contains_key("since") || init.contains_key("until");
+                d.values.insert("range".into(), json!(if custom { "custom" } else { range }));
+                d.values.insert("since".into(), init.get("since").cloned().unwrap_or(json!(since)));
+                d.values.insert("until".into(), init.get("until").cloned().unwrap_or(json!(until)));
+                d.values.insert("excluded".into(), json!([]));
+                d.values.insert("dir".into(), init.get("dir").cloned().unwrap_or(json!("")));
             }
             "about" | "updates" => {}
             _ => return None,
@@ -128,9 +157,28 @@ impl Dialog {
         self.values.get(k).and_then(Json::as_bool).unwrap_or(false)
     }
 
+    /// 导出发票：取消勾选的邮件键（`excluded` 字段，默认全选，所以只记没选的）。
+    fn excluded(&self) -> HashSet<String> {
+        self.values
+            .get("excluded")
+            .and_then(Json::as_array)
+            .map(|a| a.iter().filter_map(Json::as_str).map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
+    /// 导出发票：当前日期范围内的发票邮件。范围变了才重新扫描（扫描要读全部文件夹）；日期填错时返回错误（英文键，界面翻译）。
+    fn invoice_items(&mut self, app: &mut MailApp) -> Result<&[MessageMeta], &'static str> {
+        let range = mailfabrica_engine::invoice_range(&self.s("since"), &self.s("until"))?;
+        if self.invoices.as_ref().is_none_or(|(r, _)| *r != range) {
+            self.invoices = Some((range, app.session.invoice_messages_in(range)));
+        }
+        Ok(self.invoices.as_ref().map(|(_, items)| items.as_slice()).unwrap_or_default())
+    }
+
     /// 对话框标题。
     fn title(&self, lang: Language) -> &'static str {
         match self.name.as_str() {
+            "invoiceExport" => lang.t("Export Invoices"),
             "accountAdd" => lang.t("Add Account"),
             "accountEdit" => lang.t("Account Settings"),
             "settings" => lang.t("Settings"),
@@ -233,6 +281,31 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
             }
             app.run("app.prefs", Json::Object(p)).and_then(|_| app.run("ai.config", ai))
         }
+        "invoiceExport" => {
+            let mut d = d;
+            let excluded = d.excluded();
+            let keys: Vec<String> = match d.invoice_items(app) {
+                Err(e) => return fail(app, lang.t(e)),
+                Ok(items) => items.iter().map(|m| m.key.to_string()).filter(|k| !excluded.contains(k)).collect(),
+            };
+            if keys.is_empty() {
+                return fail(app, lang.t("Choose at least one message"));
+            }
+            let dir = match d.s("dir").trim() {
+                "" => match &app.services.pick_folder {
+                    Some(pick) => pick(),
+                    None => return fail(app, lang.t("No file dialog available")),
+                },
+                dir => Some(dir.to_string()),
+            };
+            // 用户在文件夹选择框里取消：对话框留着，可以改了再导出
+            let Some(dir) = dir else { return Ok(Json::Null) };
+            let r = app.run("invoice.export", json!({"dir": dir, "keys": keys}));
+            if r.is_ok() {
+                app.toast = Some((lang.t("Exporting invoices…").to_string(), crate::now_ms()));
+            }
+            r
+        }
         "contacts" => {
             let email = d.s("email").trim().to_string();
             if email.is_empty() {
@@ -260,6 +333,14 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
         }
     }
     r
+}
+
+/// 对话框留着，显示 `msg`，返回同样的错误（控制通道也能看到原因）。
+fn fail(app: &mut MailApp, msg: &str) -> Result<Json, String> {
+    if let Some(d) = app.dialog.as_mut() {
+        d.error = Some(msg.to_string());
+    }
+    Err(msg.to_string())
 }
 
 /// 添加账户的验证结果回来了：添加账户对话框正在等这个账户就在对话框里处理（成功关闭，失败显示原因、
@@ -310,7 +391,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
     let mut close = false;
     let mut ok = false;
     let width = match d.name.as_str() {
-        "contacts" => 560.0,
+        "contacts" | "invoiceExport" => 560.0,
         "about" => 380.0,
         _ => 480.0,
     };
@@ -335,6 +416,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                 "accountEdit" => account_edit(app, ui, &mut d, &mut close),
                 "settings" => settings(ui, &mut d, lang),
                 "contacts" => contacts(app, ui, &mut d, &mut close),
+                "invoiceExport" => invoice_export(app, ui, &mut d),
                 "updates" => crate::update_dialog::show(app, ui),
                 _ => about(ui, lang, &t),
             }
@@ -350,6 +432,7 @@ pub fn show(app: &mut MailApp, ctx: &egui::Context) {
                     "accountAdd" if d.s("provider").is_empty() => (None, lang.t("Cancel")),
                     "accountAdd" => (Some(lang.t("Add")), lang.t("Cancel")),
                     "contacts" | "about" | "updates" => (None, lang.t("Close")),
+                    "invoiceExport" => (Some(lang.t("Export…")), lang.t("Cancel")),
                     _ => (Some(lang.t("Save")), lang.t("Cancel")),
                 };
                 let verifying = d.verifying.is_some();
@@ -860,6 +943,135 @@ fn contacts(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog, close: &mut bool) {
     });
 }
 
+/// 导出发票：选日期范围（常用范围或手填），勾选要导出的发票邮件（默认全选）。
+fn invoice_export(app: &mut MailApp, ui: &mut Ui, d: &mut Dialog) {
+    let lang = app.lang();
+    let t = Tokens::get(ui.ctx());
+    let dim = |s: &str| egui::RichText::new(s.to_string()).color(t.text_dim);
+    ui.horizontal(|ui| {
+        ui.label(dim(lang.t("Date range")));
+        let cur = d.s("range");
+        let label = RANGES.iter().find(|(v, _)| *v == cur).map(|(_, l)| lang.t(l)).unwrap_or(lang.t("Custom"));
+        let r = egui::ComboBox::from_id_salt("invoice_range").selected_text(label).width(130.0).height(400.0).show_ui(ui, |ui| {
+            for (v, l) in RANGES {
+                if ui.selectable_label(cur == v, lang.t(l)).clicked() {
+                    d.values.insert("range".into(), json!(v));
+                    // 选常用范围时把日期填好；选"自定义"保留现在的日期让用户改
+                    if let Some((since, until)) = date::range_preset(v, date::now()) {
+                        d.values.insert("since".into(), json!(since));
+                        d.values.insert("until".into(), json!(until));
+                    }
+                }
+            }
+        });
+        app.target("dialog.range", r.response.rect);
+        ui.add_space(8.0);
+        // 手改日期就算自定义范围
+        for (i, key) in ["since", "until"].into_iter().enumerate() {
+            if i == 1 {
+                ui.label(dim("–"));
+            }
+            let mut v = d.s(key);
+            let r = ui.add(egui::TextEdit::singleline(&mut v).hint_text("YYYY-MM-DD").desired_width(112.0).margin(vec2(8.0, 5.0)));
+            app.target(format!("dialog.{key}"), r.rect);
+            if r.changed() {
+                d.values.insert(key.into(), json!(v));
+                d.values.insert("range".into(), json!("custom"));
+            }
+        }
+    });
+    ui.add_space(10.0);
+    let items = match d.invoice_items(app) {
+        Ok(items) => items.to_vec(),
+        Err(e) => {
+            error_box(ui, lang.t(e), &t);
+            return;
+        }
+    };
+    let mut excluded = d.excluded();
+    let chosen = items.iter().filter(|m| !excluded.contains(&m.key.to_string())).count();
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let (n, total) = (chosen.to_string(), items.len().to_string());
+        ui.label(dim(&lang.f("Selected {n} of {total}", &[("n", &n), ("total", &total)])));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let r = ui.add_enabled(chosen > 0, egui::Button::new(lang.t("Select None")));
+            app.target("dialog.selectNone", r.rect);
+            if r.clicked() {
+                excluded = items.iter().map(|m| m.key.to_string()).collect();
+                changed = true;
+            }
+            let r = ui.add_enabled(chosen < items.len(), egui::Button::new(lang.t("Select All")));
+            app.target("dialog.selectAll", r.rect);
+            if r.clicked() {
+                excluded.clear();
+                changed = true;
+            }
+        });
+    });
+    ui.add_space(6.0);
+    egui::Frame::NONE.stroke(egui::Stroke::new(1.0, t.separator)).corner_radius(8.0).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("invoice_list").max_height(300.0).min_scrolled_height(300.0).auto_shrink([false, false]).show(
+            ui,
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if items.is_empty() {
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| ui.label(egui::RichText::new(lang.t("No invoice messages in this date range")).color(t.text_faint)));
+                }
+                for (i, m) in items.iter().enumerate() {
+                    let key = m.key.to_string();
+                    let w = ui.available_width();
+                    let (rect, resp) = ui.allocate_exact_size(vec2(w, 46.0), Sense::click());
+                    app.target(format!("dialog.invoice.{i}"), rect);
+                    if resp.hovered() {
+                        ui.painter().rect_filled(rect, 0.0, t.group);
+                    }
+                    // 整行可点：点复选框时它自己翻转 `on`；点行的其他地方在这里翻转
+                    let was_on = !excluded.contains(&key);
+                    let mut on = was_on;
+                    let boxed = Rect::from_center_size(rect.left_center() + vec2(20.0, 0.0), vec2(18.0, 18.0));
+                    let toggled = ui.put(boxed, egui::Checkbox::without_text(&mut on)).changed();
+                    if !toggled && resp.clicked() {
+                        on = !was_on;
+                    }
+                    if on != was_on {
+                        if on {
+                            excluded.remove(&key);
+                        } else {
+                            excluded.insert(key.clone());
+                        }
+                        changed = true;
+                    }
+                    let x = rect.left() + 40.0;
+                    let day = date::date(m.date);
+                    let day_w = 84.0;
+                    let sender = m.from.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| m.from.email.clone());
+                    let g = widgets::elided(ui.painter(), &sender, theme::ui_bold(13.0), t.text, w - 40.0 - day_w - 12.0);
+                    ui.painter().galley(egui::pos2(x, rect.top() + 6.0), g, t.text);
+                    let g = widgets::elided(ui.painter(), &day, theme::ui_font(12.0), t.text_faint, day_w);
+                    ui.painter().galley(egui::pos2(rect.right() - 12.0 - g.size().x, rect.top() + 7.0), g, t.text_faint);
+                    let mut subject_w = w - 40.0 - 12.0;
+                    if m.has_attachments {
+                        let r = Rect::from_min_size(egui::pos2(rect.right() - 12.0 - 14.0, rect.top() + 25.0), vec2(14.0, 14.0));
+                        icons::paint(ui.painter(), r, Icon::Paperclip, t.text_faint);
+                        subject_w -= 20.0;
+                    }
+                    let g = widgets::elided(ui.painter(), &m.subject, theme::ui_font(12.5), t.text_dim, subject_w);
+                    ui.painter().galley(egui::pos2(x, rect.top() + 25.0), g, t.text_dim);
+                    ui.painter().line_segment([egui::pos2(x, rect.bottom()), rect.right_bottom()], egui::Stroke::new(1.0, t.separator));
+                }
+            },
+        );
+    });
+    if changed {
+        let mut list: Vec<String> = excluded.into_iter().collect();
+        list.sort();
+        d.values.insert("excluded".into(), json!(list));
+        d.error = None;
+    }
+}
+
 /// 关于：图标、名字、版本、说明。
 fn about(ui: &mut Ui, lang: Language, t: &Tokens) {
     ui.vertical_centered(|ui| {
@@ -888,5 +1100,54 @@ mod tests {
                 assert!(Language::Chinese.t(key) != key || key == "Gmail", "missing translation: {key:?}");
             }
         }
+    }
+
+    /// 日期范围选项和引擎的日期错误经变量传给 `t()`，也要有中文。
+    #[test]
+    fn invoice_strings_are_translated() {
+        let errors = [mailfabrica_engine::invoice_range("x", ""), mailfabrica_engine::invoice_range("2026-10-02", "2026-10-01")];
+        let keys = RANGES.iter().map(|(_, l)| *l).chain(errors.into_iter().filter_map(Result::err));
+        for key in keys {
+            assert!(Language::Chinese.t(key) != key, "missing translation: {key:?}");
+        }
+    }
+
+    /// 导出发票对话框：打开、画几帧；日期填错、全不选时不导出并留着对话框；取消勾选的邮件不导出。
+    #[test]
+    fn invoice_export_dialog() {
+        let ctx = egui::Context::default();
+        let mut app = MailApp::new(mailfabrica_engine::Session::demo().expect("demo"), crate::Services::default());
+        MailApp::setup_context(&ctx, false);
+        app.fonts_ready = true;
+        app.run("ui.exportInvoices", json!({})).expect("open");
+        assert_eq!(app.dialog.as_ref().map(|d| d.name.as_str()), Some("invoiceExport"));
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0));
+        for i in 0..3 {
+            let input = egui::RawInput { screen_rect: Some(screen), time: Some(i as f64 * 0.016), ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| app.ui(ui));
+            output.textures_delta.clear();
+        }
+        let all = app.session.invoice_messages();
+        assert!(!all.is_empty());
+        let set = |app: &mut MailApp, k: &str, v: Json| {
+            if let Some(d) = app.dialog.as_mut() {
+                d.values.insert(k.into(), v);
+            }
+        };
+        set(&mut app, "since", json!("2026/10/01"));
+        assert_eq!(confirm(&mut app).unwrap_err(), app.lang().t("Dates must look like 2026-10-01"));
+        assert!(app.dialog.is_some());
+        set(&mut app, "since", json!(""));
+        set(&mut app, "excluded", json!(all.iter().map(|m| m.key.to_string()).collect::<Vec<_>>()));
+        assert_eq!(confirm(&mut app).unwrap_err(), app.lang().t("Choose at least one message"));
+        // 只导出第一封
+        let dir = std::env::temp_dir().join(format!("mf-invoice-dialog-{}", std::process::id()));
+        set(&mut app, "excluded", json!(all.iter().skip(1).map(|m| m.key.to_string()).collect::<Vec<_>>()));
+        set(&mut app, "dir", json!(dir.to_string_lossy()));
+        let r = confirm(&mut app).expect("export");
+        assert_eq!(r["total"], 1);
+        assert!(app.dialog.is_none());
+        app.session.wait_idle(std::time::Duration::from_secs(10));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

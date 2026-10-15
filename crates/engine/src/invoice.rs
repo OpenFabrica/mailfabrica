@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use mailfabrica_core::{Folder, FolderRole, MessageMeta, MessageView, MsgKey};
+use mailfabrica_core::{Folder, FolderRole, MessageMeta, MessageView, MsgKey, date};
 use serde::Serialize;
 
 use crate::{BodyState, EngineError, Result, Session, UiRequest, view};
@@ -23,6 +23,25 @@ const MAX_EXPORT: usize = 2000;
 pub fn is_invoice(meta: &MessageMeta) -> bool {
     let hay = format!("{} {} {}", meta.subject, meta.from.name.as_deref().unwrap_or_default(), meta.from.email).to_lowercase();
     KEYWORDS.iter().any(|k| hay.contains(k))
+}
+
+/// 发票日期范围：(起始 Unix 秒, 结束 Unix 秒，不含)，`None` 表示这一头不限。
+pub type InvoiceRange = (Option<i64>, Option<i64>);
+
+/// 解析发票日期范围：`YYYY-MM-DD`（本地时区），两头都含当天，空串表示不限。
+/// 错误是给用户看的英文短句（界面按它翻译）。
+pub fn invoice_range(since: &str, until: &str) -> std::result::Result<InvoiceRange, &'static str> {
+    let parse = |s: &str, f: fn(&str) -> Option<i64>| {
+        if s.trim().is_empty() { Ok(None) } else { f(s).map(Some).ok_or("Dates must look like 2026-10-01") }
+    };
+    let from = parse(since, date::day_start)?;
+    let to = parse(until, date::day_end)?;
+    if let (Some(a), Some(b)) = (from, to)
+        && a >= b
+    {
+        return Err("The start date is after the end date");
+    }
+    Ok((from, to))
 }
 
 /// 发票范围包含的文件夹：正常邮件文件夹，但不含已发送和草稿（自己转发出去的不算收到的发票）。
@@ -76,10 +95,16 @@ pub(crate) struct Exporter {
 impl Session {
     /// 全部账户里的发票邮件，最新的在前。
     pub fn invoice_messages(&mut self) -> Vec<MessageMeta> {
+        self.invoice_messages_in((None, None))
+    }
+
+    /// 发信日期落在 `range`（见 [`invoice_range`]）里的发票邮件，最新的在前。
+    pub fn invoice_messages_in(&mut self, range: InvoiceRange) -> Vec<MessageMeta> {
+        let within = |m: &MessageMeta| range.0.is_none_or(|a| m.date >= a) && range.1.is_none_or(|b| m.date < b);
         let mut out: Vec<MessageMeta> = Vec::new();
         for a in self.account_ids() {
             for f in self.store.folders(&a).into_iter().filter(invoice_folder) {
-                out.extend(self.store.messages(&a, &f.path).unwrap_or_default().into_iter().filter(is_invoice));
+                out.extend(self.store.messages(&a, &f.path).unwrap_or_default().into_iter().filter(|m| is_invoice(m) && within(m)));
             }
         }
         out.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| b.key.cmp(&a.key)));

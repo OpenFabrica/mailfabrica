@@ -32,7 +32,7 @@ The screenshots come from demo mode (`--demo`); all accounts and messages in the
 - **Group by subject**: messages with the same subject (ignoring prefixes like `Re:`, `Fwd:`, `回复：`) share one row; turn it off from the list menu or in Settings.
 - **AI writing assistant**: in a compose window, write a draft or rewrite your text (polish, more formal, friendlier, shorter, longer, translate). The result is a suggestion you accept (replace or append) or dismiss; only your own text is changed, never the signature or the quoted original. On replies and forwards the original message is given to the AI as context.
 - **AI quick reply**: drafts a short reply to the open message and fills the quick-reply box under the reading pane.
-- **One-click invoice export**: the "Invoices" virtual folder in the sidebar lists invoice emails from all accounts. Export saves the invoice attachments (pdf/ofd/xml/zip) as `date_sender_originalname` and writes `invoices.csv` (date, sender, subject, amount, files, download links found in the body).
+- **One-click invoice export**: the "Invoices" virtual folder in the sidebar lists invoice emails from all accounts. Export opens a dialog where you pick a date range (this month, last month, custom dates…) and tick the messages to include; it then saves the invoice attachments (pdf/ofd/xml/zip) as `date_sender_originalname` and writes `invoices.csv` (date, sender, subject, amount, files, download links found in the body).
 - **Chinese and English UI, light and dark themes**.
 - **Scriptable**: every action is a command, callable from the control channel, the command line and MCP.
 
