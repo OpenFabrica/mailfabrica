@@ -39,6 +39,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - blitz 锁在 `=0.3.0-beta.2`。已知的坑：没有 `base_url` 时 `//host` 地址会 panic（用占位 base）；`<link>` 样式表会阻塞绘制（解析前去掉）；
     `NetProvider` 每个请求都必须回调（失败给空数据）；链接可点区域用 `node_client_rects`，不要用 `hit()`（带 padding 的按钮会错位）。
   - 远程图片（`html/src/net.rs`）只连公网地址：在 DNS 解析这一步过滤，不用环境变量代理。`198.18.0.0/15` 故意放行（Surge/Clash fake-ip）。
+- **日历**：`engine/src/calendar.rs`。系统日历由 `CalendarSource` 提供：macOS 用 `/usr/bin/osascript -l JavaScript` 调 EventKit
+  （不写 `unsafe` 绑定），后台线程读、`pump()` 收；其他系统 `supported: false`。演示和测试用 `DemoCalendar`，测试别碰真实日历。
+  打包时 Info.plist 有日历用途说明，Developer ID 签名带 `com.apple.security.personal-information.calendars`（`xtask/src/notary.rs`）。
 - **控制通道**：`apps/mailfabrica/src/control_server.rs`（TCP JSON 行）→ `crates/ui-egui/src/control.rs`（方法实现）。
   MCP（`crates/mcp`）的后端要么是进程内 `Session`，要么用 `--control PORT` 连正在运行的程序。
 

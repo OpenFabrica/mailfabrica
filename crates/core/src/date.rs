@@ -104,9 +104,30 @@ pub fn range_preset(name: &str, now: i64) -> Option<(String, String)> {
     Some((fmt(from), fmt(to)))
 }
 
+/// 农历日期的短文字（日历格子用）：每月初一显示月名（"九月"、"闰六月"、"腊月"），其他日子显示"初六"、"廿一"。
+/// 超出农历表范围（1901–2100）时返回空串。
+pub fn lunar(day: NaiveDate) -> String {
+    use chinese_lunisolar_calendar::{ChineseVariant, LunarDay, LunisolarDate};
+    let Ok(l) = LunisolarDate::from_date(day) else { return String::new() };
+    let d = l.to_lunar_day();
+    if d == LunarDay::First { l.to_lunar_month().to_str(ChineseVariant::Simple).to_string() } else { d.to_str().to_string() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 农历：初一显示月名，其他显示日子（对照万年历）。
+    #[test]
+    fn lunar_labels() {
+        let d = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(lunar(d(2026, 10, 15)), "初六");
+        assert_eq!(lunar(d(2026, 10, 10)), "九月");
+        assert_eq!(lunar(d(2026, 10, 1)), "廿一");
+        assert_eq!(lunar(d(2026, 2, 17)), "正月");
+        assert_eq!(lunar(d(2025, 1, 29)), "正月");
+        assert_eq!(lunar(d(1800, 1, 1)), "");
+    }
 
     /// 按天解析：开始和结束正好差一天（不跨夏令时的日子），格式不对返回 None。
     #[test]

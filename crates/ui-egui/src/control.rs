@@ -7,7 +7,7 @@
 //! - `engine.execute {command, params}` — 执行任意引擎命令或界面命令（`ui.dialog`、`ui.darkMode`、
 //!   `ui.language`、`ui.quickReply {key?, text}`、`ui.saveAttachment {key, index, path?}`、
 //!   `ui.attachFiles {id, paths?}`、`ui.openUrl {url}`、`ui.focusSearch`、`ui.toggleCollapsed {account}`、
-//!   `ui.readerMode {key?, mode: "html"|"plain"}`）
+//!   `ui.readerMode {key?, mode: "html"|"plain"}`、`ui.calendar {on?, month?, day?}`）
 //! - `engine.commands` — 全部命令（含是否可用、参数说明）和界面命令
 //! - `engine.journal` — 已执行的命令记录
 //! - `ui.inspect` — 界面状态：窗口大小、各区域矩形、范围、搜索词、选中/聚焦邮件、对话框、写信窗口
@@ -15,6 +15,7 @@
 //!   提示、状态栏、阅读窗格（`reader.mode`：正文按 `html` 还是 `plain` 显示，`reader.hasHtml`，
 //!   `reader.view`：`group`（主题组列表）/ `message` / `null`，`reader.groupBack`：返回横条指向的组）、
 //!   按主题归类（`grouping` 开关、`rows` 行数、`group` 打开的组、`groups` 全部主题组）、
+//!   日历（`calendar`：是否打开、月份、选中的日子、隐藏的来源、可见范围里的事件数和邮件数、弹出框、系统日历状态）、
 //!   可点击目标（`targets`：名字 → `[x, y, w, h]`）
 //! - `ui.compose.select {id?, start, end?}` — 设置写信正文的选区（字符下标，`end` 省略时为光标）并聚焦正文，
 //!   之后可以点格式工具栏（`compose.<id>.fmt.bold` 等目标）或用 `ui.text` 输入。`id` 省略时取最后一个写信窗口。
@@ -112,6 +113,7 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
             "list": rect_json(app.layout.list),
             "reader": rect_json(app.layout.reader),
             "status": rect_json(app.layout.status),
+            "calendar": rect_json(app.layout.calendar),
         },
         "scope": serde_json::to_value(&view.scope).unwrap_or_default(),
         "query": view.query,
@@ -143,6 +145,7 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
             "view": if view.focused.is_some() { Some("message") } else if view.group.is_some() { Some("group") } else { None },
             "groupBack": view.focused.as_ref().and_then(|k| app.session.group_of(k)),
         }),
+        "calendar": crate::calendar::state_json(app),
         "targets": targets,
     })
 }
@@ -233,6 +236,7 @@ pub fn handle(app: &mut MailApp, ctx: &egui::Context, method: &str, p: &Json) ->
                 "ui.openUrl",
                 "ui.toggleCollapsed",
                 "ui.readerMode",
+                "ui.calendar",
                 "ui.message.dismiss",
             ] {
                 v.push(json!({"id": id, "enabled": true, "ui": true}));

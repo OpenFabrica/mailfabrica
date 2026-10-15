@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod brands;
+pub mod calendar;
 pub mod compose;
 pub mod control;
 pub mod dialogs;
@@ -44,11 +45,23 @@ pub struct UiState {
     pub list_width: f32,
     /// 折叠起来的账户 id。
     pub collapsed: Vec<String>,
+    /// 日历里隐藏的邮箱（账户 id）。
+    pub calendar_hidden_accounts: Vec<String>,
+    /// 日历里隐藏的系统日历 id。
+    pub calendar_hidden_calendars: Vec<String>,
 }
 
 impl Default for UiState {
     fn default() -> Self {
-        UiState { dark: false, language: Language::default(), sidebar_width: 230.0, list_width: 360.0, collapsed: vec![] }
+        UiState {
+            dark: false,
+            language: Language::default(),
+            sidebar_width: 230.0,
+            list_width: 360.0,
+            collapsed: vec![],
+            calendar_hidden_accounts: vec![],
+            calendar_hidden_calendars: vec![],
+        }
     }
 }
 
@@ -73,6 +86,8 @@ pub struct Layout {
     pub list: Option<egui::Rect>,
     pub reader: Option<egui::Rect>,
     pub status: Option<egui::Rect>,
+    /// 日历模式的大日历区域（不在日历模式时为空）。
+    pub calendar: Option<egui::Rect>,
 }
 
 /// 整个邮件客户端界面。
@@ -102,6 +117,8 @@ pub struct MailApp {
     pub list: list::ListState,
     pub reader: reader::ReaderState,
     pub composer: compose::ComposeUi,
+    /// 日历视图（打开时代替侧边栏、列表和阅读窗格）。
+    pub calendar: calendar::CalendarUi,
     pub layout: Layout,
     /// 可点击目标（名字, 矩形），每帧重建，控制通道用 `ui.click {target}` 点它们。
     pub targets: Vec<(String, egui::Rect)>,
@@ -135,6 +152,7 @@ impl MailApp {
             list: list::ListState::default(),
             reader: reader::ReaderState::default(),
             composer: compose::ComposeUi::default(),
+            calendar: calendar::CalendarUi::default(),
             layout: Layout::default(),
             targets: Vec::new(),
             fonts_ready: false,
@@ -217,6 +235,7 @@ impl MailApp {
                 self.open_url(&url);
                 Ok(Json::Null)
             }
+            "ui.calendar" => calendar::command(self, p),
             "ui.quickReply" => self.quick_reply(p),
             "ui.readerMode" => self.reader_mode(p),
             "ui.saveAttachment" => self.save_attachment(p),
@@ -447,24 +466,11 @@ impl MailApp {
         let r =
             egui::Panel::bottom("statusbar").exact_size(26.0).frame(egui::Frame::NONE.fill(t.status)).show(ui, |ui| widgets::status_bar(self, ui));
         self.layout.status = Some(r.response.rect);
-        let r = egui::Panel::left("sidebar")
-            .resizable(true)
-            .default_size(self.ui.sidebar_width)
-            .size_range(170.0..=420.0)
-            .frame(egui::Frame::NONE.fill(t.sidebar))
-            .show(ui, |ui| sidebar::show(self, ui));
-        self.layout.sidebar = Some(r.response.rect);
-        self.ui.sidebar_width = r.response.rect.width().round();
-        let r = egui::Panel::left("messages")
-            .resizable(true)
-            .default_size(self.ui.list_width)
-            .size_range(260.0..=720.0)
-            .frame(egui::Frame::NONE.fill(t.list))
-            .show(ui, |ui| list::show(self, ui));
-        self.layout.list = Some(r.response.rect);
-        self.ui.list_width = r.response.rect.width().round();
-        let r = egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.reader)).show(ui, |ui| reader::show(self, ui));
-        self.layout.reader = Some(r.response.rect);
+        if self.calendar.on {
+            calendar::show(self, ui);
+        } else {
+            self.mail_panes(ui);
+        }
         compose::show(self, &ctx);
         dialogs::show(self, &ctx);
         widgets::message_box(self, &ctx);
@@ -486,6 +492,30 @@ impl MailApp {
         }
         control::issue_screenshots(self, &ctx);
         control::collect_screenshots(self, &ctx);
+    }
+
+    /// 邮件模式的三栏：侧边栏、邮件列表、阅读窗格。
+    fn mail_panes(&mut self, ui: &mut egui::Ui) {
+        let t = theme::Tokens::get(ui.ctx());
+        self.layout.calendar = None;
+        let r = egui::Panel::left("sidebar")
+            .resizable(true)
+            .default_size(self.ui.sidebar_width)
+            .size_range(170.0..=420.0)
+            .frame(egui::Frame::NONE.fill(t.sidebar))
+            .show(ui, |ui| sidebar::show(self, ui));
+        self.layout.sidebar = Some(r.response.rect);
+        self.ui.sidebar_width = r.response.rect.width().round();
+        let r = egui::Panel::left("messages")
+            .resizable(true)
+            .default_size(self.ui.list_width)
+            .size_range(260.0..=720.0)
+            .frame(egui::Frame::NONE.fill(t.list))
+            .show(ui, |ui| list::show(self, ui));
+        self.layout.list = Some(r.response.rect);
+        self.ui.list_width = r.response.rect.width().round();
+        let r = egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.reader)).show(ui, |ui| reader::show(self, ui));
+        self.layout.reader = Some(r.response.rect);
     }
 
     /// 执行本帧收集的命令。
@@ -523,7 +553,8 @@ impl MailApp {
                 }
             }
         }
-        if typing {
+        // 日历模式下看不到邮件列表，上下键不切换邮件
+        if typing || self.calendar.on {
             return;
         }
         let (down, up) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp)));
@@ -643,6 +674,58 @@ mod tests {
                 assert_eq!(alphas, vec![100], "frame {index} at {time}s");
             }
         }
+    }
+
+    /// 画几帧界面（第一帧先设好字体），返回最后一帧的输出。
+    fn frames(ctx: &egui::Context, app: &mut MailApp, n: usize) {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+        for i in 0..n {
+            let input = egui::RawInput { screen_rect: Some(rect), time: Some(i as f64 * 0.016), ..Default::default() };
+            let mut output = ctx.run_ui(input, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    /// 日历模式：能打开、能画、登记了控制目标；演示日历的事件能读到；取消勾选邮箱后这个邮箱的邮件不再出现。
+    #[test]
+    fn calendar_mode_renders_and_filters() {
+        let ctx = egui::Context::default();
+        let mut app = MailApp::new(Session::demo().expect("demo"), Services::default());
+        frames(&ctx, &mut app, 2);
+        let r = app.run("ui.calendar", json!({"on": true})).expect("ui.calendar");
+        assert_eq!(r["on"], json!(true));
+        assert!(app.run("ui.calendar", json!({"month": "2026-13"})).is_err());
+        frames(&ctx, &mut app, 2);
+        // 第一帧请求了 calendar.load，等后台读完再画
+        app.session.wait_idle(std::time::Duration::from_secs(10));
+        frames(&ctx, &mut app, 3);
+        let today = calendar::today().format("%Y-%m-%d").to_string();
+        let has = |app: &MailApp, name: &str| app.targets.iter().any(|(n, _)| n == name);
+        for name in ["calendar.today", "calendar.prev", "calendar.next", "calendar.refresh", "calendar.back", &format!("calendar.day.{today}")] {
+            assert!(has(&app, name), "missing target {name}");
+        }
+        assert!(app.layout.calendar.is_some() && app.layout.list.is_none());
+        let days = app.calendar.days().expect("days");
+        assert_eq!(days.len(), 42);
+        assert!(days.iter().any(|d| !d.events.is_empty()), "demo events should be loaded");
+        let mails: usize = days.iter().map(|d| d.message_count).sum();
+        assert!(mails > 0, "demo mail should show in the calendar");
+        assert!(app.targets.iter().any(|(n, _)| n.starts_with("calendar.mail.")));
+        // 取消勾选唯一的邮箱
+        let acc = app.session.accounts().first().map(|a| a.id.clone()).expect("account");
+        assert!(has(&app, &format!("calendar.account.{acc}")));
+        app.ui.calendar_hidden_accounts.push(acc);
+        frames(&ctx, &mut app, 1);
+        let days = app.calendar.days().expect("days");
+        assert_eq!(days.iter().map(|d| d.message_count).sum::<usize>(), 0);
+        assert!(days.iter().any(|d| !d.events.is_empty()));
+        // 切回邮件
+        app.run("ui.calendar", json!({})).expect("toggle");
+        frames(&ctx, &mut app, 1);
+        assert!(!app.calendar.on && app.layout.list.is_some() && has(&app, "sidebar.calendar"));
     }
 
     #[test]

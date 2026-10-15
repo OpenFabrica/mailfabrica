@@ -28,6 +28,7 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 | `ui.drag` | `{x, y, toX, toY, shift?}` | 按住左键从 (x, y) 拖到 (toX, toY) 再松开（选文字） |
 | `ui.key` | `{key, shift?, cmd?, alt?, ctrl?}` | 键盘按键 |
 | `ui.text` | `{text}` | 输入文字 |
+| `ui.calendar` | `{on?, month?, day?}` | 打开/关闭日历视图，见下面的“日历” |
 | `app.quit` | | 退出程序 |
 
 其他方法名如果恰好是命令 id（例如 `mail.sync`），就直接执行这个命令，参数就是 `params`。
@@ -56,6 +57,34 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 
 可点击目标：列表行 `list.row.<最新一封的键>`、视图菜单 `list.viewMenu`（菜单里的 `list.viewMenu.groupBySubject`）、
 组列表里的每封 `reader.group.<键>`、返回横条 `reader.group.back`。
+
+## 日历
+
+`ui.calendar {on?, month?, day?}` 打开或关闭日历视图（省略 `on` 时切换；给了 `month` 或 `day` 就打开）。
+`month` 写成 `2026-10`，翻到这个月；`day` 写成 `2026-10-16`，翻到那个月并选中这天。返回下面 `ui.inspect` 里的 `calendar` 对象。
+
+日历视图保留工具栏和状态栏，左边是小月历和来源过滤，右边是一个月的格子（星期日开头，6 周）。
+格子里先放系统日历事件，再放这天收到的邮件；放不下时最后一行是"还有 N 项"。中文界面在右上角显示农历。
+打开日历和点刷新时会用 `calendar.load {force: true}` 重读系统日历；翻到别的月时读新的范围。
+取消勾选的邮箱、系统日历存在 `ui.json` 的 `calendarHiddenAccounts`、`calendarHiddenCalendars` 里。
+
+| 字段 / 目标 | 说明 |
+|---|---|
+| `ui.inspect` → `calendar` | `{on, month, since, until, selected, hiddenAccounts, hiddenCalendars, days, events, mails, popup, system: {supported, busy, error, calendars}, error}`；`events`、`mails` 是可见范围里的个数，`popup` 是 `{kind: "event", id, date}` 或 `{kind: "day", date}` |
+| `ui.inspect` → `panes.calendar` | 大日历区域的矩形（不在日历模式时为 `null`；日历模式下 `list`、`reader` 为 `null`） |
+| `sidebar.calendar`、`sidebar.mail` | 侧边栏底部的邮件 / 日历切换 |
+| `calendar.back`、`calendar.mode` | 日历左栏底部的同一个切换（`calendar.back` 回到邮件） |
+| `calendar.prev`、`calendar.today`、`calendar.next` | 右上角"‹ 今天 ›" |
+| `calendar.refresh` | 左上角刷新（强制重读系统日历）；`calendar.retry` 是拒绝授权提示下的"重试" |
+| `calendar.mini.prev`、`calendar.mini.next`、`calendar.mini.<YYYY-MM-DD>` | 小月历的翻页和日期（点日期 = 大日历翻到那个月并选中） |
+| `calendar.day.<YYYY-MM-DD>` | 大日历的格子：单击选中，双击（`ui.click {target, count: 2}`）弹出这天的全部内容 |
+| `calendar.more.<YYYY-MM-DD>` | 格子里的"还有 N 项"，弹出这天的全部内容 |
+| `calendar.event.<id>` | 事件条（跨天事件只登记第一格），点开看详情 |
+| `calendar.mail.<键>` | 邮件行：离开日历，`view.scope` 到邮件所在文件夹再 `view.select` 打开它 |
+| `calendar.popup.event.<id>`、`calendar.popup.mail.<键>` | 弹出框里的事件和邮件 |
+| `calendar.account.<账户 id>`、`calendar.cal.<日历 id>` | 来源过滤的勾选框 |
+
+弹出框点外面或按 Esc 关闭。
 
 ## 无界面的做法
 

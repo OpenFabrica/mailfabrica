@@ -1,5 +1,5 @@
 //! 左侧边栏：顶部快捷入口（所有收件箱 / 未读邮件 / 红旗邮件），然后每个账户一个可折叠的文件夹树，
-//! 最下面是"添加账户"。
+//! 最下面是"添加账户"和邮件/日历切换。
 
 use egui::{Rect, Sense, Stroke, Ui, pos2, vec2};
 use mailfabrica_engine::{Folder, FolderRole, Scope};
@@ -103,6 +103,10 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             if resp.clicked() {
                 app.defer("ui.dialog", json!({"name": "accountAdd"}));
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(10.0);
+                crate::calendar::mode_switch(app, ui, ["sidebar.mail", "sidebar.calendar"]);
+            });
         });
     });
     let scope = app.session.view().scope.clone();

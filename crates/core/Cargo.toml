@@ -12,6 +12,7 @@ workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
+chinese-lunisolar-calendar = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

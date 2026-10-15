@@ -9,6 +9,14 @@ use crate::run;
 /// Developer ID 签名身份，加上可选的公证钥匙串 profile。只有身份时是"签名的本地包"：不公证、不查版本和工作区，
 /// 但签名每次都一样，钥匙串里点过的"始终允许"对之后的包仍然有效（临时签名每次打包都变，会反复弹授权框）。
 /// 有 profile 时是正式分发，版本、工作区必须合规。
+/// Hardened Runtime 的权限声明：读系统日历（EventKit）。
+const ENTITLEMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>com.apple.security.personal-information.calendars</key><true/>
+</dict></plist>
+"#;
+
 pub(crate) struct Config {
     identity: String,
     profile: Option<String>,
@@ -56,7 +64,10 @@ impl Config {
         let mut command = Command::new("/usr/bin/codesign");
         command.args(["--force", "--sign", &self.identity, "--timestamp"]);
         if runtime {
-            command.args(["--options", "runtime"]);
+            // Hardened Runtime 下没有日历权限声明时，系统直接拒绝读日历（日历视图显示系统日历事件要用）
+            let entitlements = std::env::temp_dir().join("mailfabrica-entitlements.plist");
+            fs::write(&entitlements, ENTITLEMENTS).map_err(|e| e.to_string())?;
+            command.args(["--options", "runtime", "--entitlements"]).arg(&entitlements);
         }
         command.arg(path);
         run(command, "Developer ID codesign")

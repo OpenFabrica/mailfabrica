@@ -35,6 +35,8 @@ tempfile = "3"
 semver = "1"
 sha2 = "0.10"
 tiny-skia = "0.12"
+# 农历（日历视图的日期格子里显示"初六"、"九月"）
+chinese-lunisolar-calendar = { version = "0.2", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"

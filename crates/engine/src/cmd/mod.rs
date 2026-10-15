@@ -1,5 +1,5 @@
 //! 命令注册表。id 按功能分组：`account.*`、`mail.*`、`view.*`、`message.*`、`compose.*`、
-//! `contacts.*`、`folder.*`、`app.*`。
+//! `contacts.*`、`folder.*`、`calendar.*`、`app.*`。
 //!
 //! 参数里的邮件键用字符串形式 `账户/uid/文件夹`（见 `MsgKey`）。`keys` 省略时作用于当前选中的邮件。
 //!
@@ -81,6 +81,14 @@
 //!   或名字含"发票"/invoice）存到 `dir`，文件名 `日期_发件人_原名`；写清单 `发票清单.csv`（英文界面 `invoices.csv`，
 //!   含日期、发件人、主题、金额、文件、正文里的下载链接）。正文不在本地的先下载，进度用 `invoice.status` 查。
 //! - `invoice.status` (query) — `{busy, dir, total, done, files, failed, csv?, error?}`。
+//! - `calendar.load` — `{since, until, force?}`（`YYYY-MM-DD`，两头都含，最多 400 天）在后台读系统日历事件
+//!   （macOS 用 EventKit，第一次会弹系统授权框；其他系统 `supported: false`）。同一范围读过就不重读，`force` 强制重读。
+//!   返回 `{supported, busy, error, calendars, since, until, events（个数）}`；拒绝授权时 `error` 是 `Calendar access denied`。
+//! - `calendar.days` (query) — `{since, until, accounts?, calendars?}` → 上面的状态 + `days: [{date, lunar, events, messages, messageCount}]`。
+//!   `messages` 是这天收到的邮件（各账户的收件文件夹，不含已发送、草稿、已删除、垃圾；按时间先后，每天最多 200 封），
+//!   每封 `{key, account, subject, from, date, unread, flagged}`；`events` 是已读到的系统日历事件（跨天的每天都有）。
+//!   `accounts` / `calendars` 是要显示的账户 id / 系统日历 id 数组，省略 = 全部。`lunar` 是农历（"初六"，初一为月名）。
+//! - `calendar.status` (query) — `{}` → `calendar.load` 返回的状态。
 //! - `update.check` — `{}` 检查 GitHub 稳定版；异步结果用 `update.status` 查询。
 //! - `update.download` — `{}` 下载可用更新，验证后请求打开安装器。
 //! - `update.open` — `{}` 重新验证并打开已下载的安装器。
@@ -92,6 +100,7 @@
 mod account;
 mod ai;
 mod app;
+mod calendar;
 pub(crate) mod compose;
 mod invoice;
 mod mail;
@@ -168,6 +177,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(update::specs());
         v.extend(ai::specs());
         v.extend(invoice::specs());
+        v.extend(calendar::specs());
         v
     })
 }

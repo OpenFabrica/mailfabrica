@@ -136,6 +136,30 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
 
 /// 英文 → 中文。
 pub const TABLE: &[(&str, &str)] = &[
+    // 日历
+    ("Calendar", "日历"),
+    ("Mail", "邮件"),
+    ("Mailboxes", "邮箱"),
+    ("Calendars", "系统日历"),
+    ("Refresh", "刷新"),
+    ("Previous month", "上一月"),
+    ("Next month", "下一月"),
+    ("All day", "全天"),
+    ("{n} more", "还有 {n} 项"),
+    ("{n} more messages not listed", "还有 {n} 封邮件没有列出"),
+    ("No events or mail", "这一天没有日程和邮件"),
+    ("No calendars", "没有系统日历"),
+    ("Unknown calendar", "未知日历"),
+    ("Location: {place}", "地点：{place}"),
+    ("Reading the system calendar…", "正在读取系统日历…"),
+    ("This system can't read the system calendar yet", "此系统暂不支持读取系统日历"),
+    ("Calendar access denied", "没有访问日历的权限"),
+    (
+        "Allow MailFabrica in System Settings › Privacy & Security › Calendars, then try again.",
+        "请在“系统设置 › 隐私与安全性 › 日历”中允许 MailFabrica 访问日历，然后重试。",
+    ),
+    ("The date range is too long", "日期范围太长"),
+    ("Month must look like 2026-10", "月份格式应为 2026-10"),
     // AI 助手、发票
     ("Invoices", "发票"),
     ("Export Invoices", "导出发票"),
@@ -476,6 +500,7 @@ mod tests {
             include_str!("widgets.rs"),
             include_str!("control.rs"),
             include_str!("rich_editor.rs"),
+            include_str!("calendar.rs"),
         ];
         let mut missing = Vec::new();
         for src in sources {

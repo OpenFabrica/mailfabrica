@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod ai;
+pub mod calendar;
 pub mod cmd;
 mod events;
 mod i18n;
@@ -15,6 +16,7 @@ pub mod secrets;
 mod updates;
 mod view;
 pub use ai::AiReply;
+pub use calendar::{CalDay, CalEvent, CalFilter, CalMail, CalendarSource, CalendarState, SysCalendar};
 pub use invoice::{InvoiceExport, InvoiceRange, invoice_attachments, invoice_range, is_invoice};
 pub use mailfabrica_ai as assist;
 pub use updates::{UpdatePhase, UpdateState};
@@ -343,6 +345,7 @@ pub struct Session {
     updates: updates::Updates,
     ai: ai::Ai,
     invoices: invoice::Exporter,
+    calendar: calendar::Calendar,
     view: MailView,
     bodies: HashMap<MsgKey, BodyState>,
     composes: Vec<Compose>,
@@ -384,6 +387,7 @@ impl Session {
             updates: updates::Updates::new(Arc::new(mailfabrica_update::GitHub)),
             ai: ai::Ai::new(Arc::new(mailfabrica_ai::Http)),
             invoices: invoice::Exporter::default(),
+            calendar: calendar::Calendar::system(),
             view: MailView::default(),
             bodies: HashMap::new(),
             composes: Vec::new(),
@@ -412,6 +416,7 @@ impl Session {
         let fake = FakeConnector::demo(DEMO_EMAIL, DEMO_PASSWORD);
         let mut s = Session::open(tmp.path().to_path_buf(), Arc::new(MemorySecrets::new()), Arc::new(fake))?;
         s._tmp = Some(tmp);
+        s.calendar = calendar::Calendar::new(Some(Arc::new(calendar::DemoCalendar)));
         let r = s.execute("account.add", serde_json::json!({"email": DEMO_EMAIL, "password": DEMO_PASSWORD, "name": "演示账户", "verify": false}))?;
         s.wait_idle(Duration::from_secs(30));
         let id = r.get("id").and_then(Json::as_str).unwrap_or_default().to_string();
@@ -480,7 +485,7 @@ impl Session {
     /// 处理后台事件，写入存储，刷新视图；并按 `sync_interval_minutes` 触发自动收取。
     /// 有变化时返回 true（界面需要重绘）。每帧调用一次，开销要小。
     pub fn pump(&mut self) -> bool {
-        let update_changed = self.pump_updates() | self.pump_ai();
+        let update_changed = self.pump_updates() | self.pump_ai() | self.pump_calendar();
         let events = self.worker.poll();
         let mut changed = !events.is_empty() && self.apply_events(events);
         let interval = u64::from(self.prefs.sync_interval_minutes) * 60;
@@ -509,7 +514,10 @@ impl Session {
             }
             self.pump_updates();
             self.wait_ai(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50)));
-            if (self.worker.busy_accounts().is_empty() && !self.update().busy() && !self.ai_busy()) || Instant::now() >= deadline {
+            self.wait_calendar(deadline.saturating_duration_since(Instant::now()));
+            if (self.worker.busy_accounts().is_empty() && !self.update().busy() && !self.ai_busy() && !self.calendar.state.busy)
+                || Instant::now() >= deadline
+            {
                 break;
             }
             if self.update().busy() {

@@ -72,11 +72,15 @@ pub enum Icon {
     Sparkle,
     /// 发票（下边呈锯齿的票据，中间一个人民币符号）。
     Receipt,
+    /// 日历（顶上两个吊环的台历，下面几个日期点）。
+    Calendar,
+    /// 刷新（缺口圆环加箭头）。
+    Refresh,
 }
 
 /// 所有图标变体的列表（测试与图标预览用）。
 #[allow(dead_code)]
-pub const ALL: [Icon; 52] = [
+pub const ALL: [Icon; 54] = [
     Icon::Sync,
     Icon::Compose,
     Icon::Reply,
@@ -129,6 +133,8 @@ pub const ALL: [Icon; 52] = [
     Icon::Sort,
     Icon::Sparkle,
     Icon::Receipt,
+    Icon::Calendar,
+    Icon::Refresh,
 ];
 
 /// 设计坐标系中的点（16×16 网格）。
@@ -389,6 +395,20 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
             g.line(&[(8.0, 7.0), (8.0, 11.0)], c);
             g.line(&[(6.0, 7.6), (10.0, 7.6)], light);
             g.line(&[(6.0, 9.4), (10.0, 9.4)], light);
+        }
+        Icon::Calendar => {
+            g.rect(2.0, 3.2, 12.0, 10.8, c);
+            g.line(&[(2.0, 6.4), (14.0, 6.4)], c);
+            g.line(&[(5.2, 1.6), (5.2, 4.6)], c);
+            g.line(&[(10.8, 1.6), (10.8, 4.6)], c);
+            for (x, y) in [(5.2, 9.0), (8.0, 9.0), (10.8, 9.0), (5.2, 11.6), (8.0, 11.6)] {
+                g.dot(x, y, 0.85, light);
+            }
+        }
+        Icon::Refresh => {
+            // 顶上留缺口的圆环（顺时针画），终点处的箭头沿切线指向右
+            g.line(&arc(8.0, 8.0, 5.5, 5.5, -60.0, 250.0), c);
+            g.line(&[(3.8, 1.8), (6.3, 2.8), (5.0, 5.2)], c);
         }
         Icon::Sort => {
             for (y, end) in [(4.0, 13.5), (8.0, 10.5), (12.0, 7.5)] {

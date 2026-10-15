@@ -1418,3 +1418,97 @@ fn invoice_export_demo() {
     let st = s.invoice_export();
     assert!(!st.busy && st.files >= 1 && st.csv.is_some(), "{st:?}");
 }
+
+/// 日历测试用的系统日历来源：总是返回同一个错误。
+struct FailingCalendar;
+
+impl calendar::CalendarSource for FailingCalendar {
+    /// 模拟用户拒绝授权。
+    fn fetch(&self, _: i64, _: i64) -> std::result::Result<calendar::CalendarFetch, String> {
+        Err(calendar::ACCESS_DENIED.into())
+    }
+}
+
+/// 日历：邮件按收到的日子放进格子，系统日历事件（含跨天的）放进它覆盖的每一天，按账户和日历过滤。
+#[test]
+fn calendar_days_group_mail_and_events() {
+    let (mut s, _fake, _dir) = setup();
+    s.set_calendar_source(Some(Arc::new(calendar::DemoCalendar)));
+    let day = |n| date::date(date::local_ts(n, 8, 0));
+    let (since, until) = (day(5), day(-10));
+    let r = s.execute("calendar.load", json!({"since": since, "until": until})).unwrap();
+    assert_eq!(r["supported"], true);
+    s.wait_idle(WAIT);
+    assert!(!s.calendar().busy && s.calendar().error.is_none());
+    assert_eq!(s.calendar().calendars.len(), 3);
+    let days = |s: &mut Session, extra: Json| {
+        let mut p = json!({"since": since, "until": until});
+        if let (Some(p), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+            p.extend(e.clone());
+        }
+        let r = s.execute("calendar.days", p).unwrap();
+        r["days"].as_array().unwrap().clone()
+    };
+    let titles =
+        |d: &Json, what: &str, field: &str| d[what].as_array().unwrap().iter().map(|x| x[field].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let all = days(&mut s, json!({}));
+    assert_eq!(all.len(), 16);
+    let find = |v: &[Json], n: i64| v.iter().find(|d| d["date"] == day(n)).cloned().unwrap();
+    assert_eq!(titles(&find(&all, 3), "messages", "subject"), vec!["Hello"]);
+    assert_eq!(titles(&find(&all, 1), "messages", "subject"), vec!["项目周报"]);
+    assert_eq!(find(&all, 1)["messageCount"], 1);
+    assert_eq!(titles(&find(&all, -1), "events", "title"), vec!["Bi-weekly meeting - Platform"]);
+    // 跨两天的全天事件两天都有，第三天没有
+    assert!(titles(&find(&all, -6), "events", "title").contains(&"季度规划".to_string()));
+    assert!(titles(&find(&all, -7), "events", "title").contains(&"季度规划".to_string()));
+    assert!(!titles(&find(&all, -8), "events", "title").contains(&"季度规划".to_string()));
+    assert!(!find(&all, 0)["lunar"].as_str().unwrap().is_empty());
+    // 过滤：不显示任何账户 → 没有邮件；只显示"家庭" → 只有体检
+    let none = days(&mut s, json!({"accounts": []}));
+    assert!(none.iter().all(|d| d["messages"].as_array().unwrap().is_empty() && d["messageCount"] == 0));
+    let home = days(&mut s, json!({"calendars": ["demo-home"]}));
+    let events: Vec<String> = home.iter().flat_map(|d| titles(d, "events", "title")).collect();
+    assert_eq!(events, vec!["体检"]);
+    let mine = days(&mut s, json!({"accounts": [ACC]}));
+    assert_eq!(mine.iter().map(|d| d["messageCount"].as_u64().unwrap()).sum::<u64>(), 3);
+}
+
+/// 日历参数：格式、先后、范围太长都报错；不支持的系统读不了但不报错；拒绝授权记成错误。
+#[test]
+fn calendar_params_and_errors() {
+    let (mut s, _fake, _dir) = setup();
+    s.set_calendar_source(None);
+    assert!(s.execute("calendar.days", json!({"since": "2026/10/01", "until": "2026-10-31"})).is_err());
+    assert!(s.execute("calendar.days", json!({"since": "2026-10-31", "until": "2026-10-01"})).is_err());
+    assert!(s.execute("calendar.days", json!({"since": "2024-01-01", "until": "2026-10-01"})).is_err());
+    assert!(s.execute("calendar.days", json!({"since": "2026-10-01", "until": "2026-10-31", "accounts": "x"})).is_err());
+    let r = s.execute("calendar.load", json!({"since": "2026-10-01", "until": "2026-10-31"})).unwrap();
+    assert_eq!(r["supported"], false);
+    assert_eq!(r["busy"], false);
+    let r = s.execute("calendar.days", json!({"since": "2026-10-01", "until": "2026-10-31"})).unwrap();
+    assert_eq!(r["days"].as_array().unwrap().len(), 31);
+    assert_eq!(r["days"][14]["lunar"], "初六");
+    s.set_calendar_source(Some(Arc::new(FailingCalendar)));
+    s.execute("calendar.load", json!({"since": "2026-10-01", "until": "2026-10-31"})).unwrap();
+    s.wait_idle(WAIT);
+    let r = s.execute("calendar.status", json!({})).unwrap();
+    assert_eq!(r["error"], calendar::ACCESS_DENIED);
+    // 出错后同一范围再读会重试（不算"已经读过"）
+    s.execute("calendar.load", json!({"since": "2026-10-01", "until": "2026-10-31"})).unwrap();
+    assert!(s.calendar().busy);
+    s.wait_idle(WAIT);
+}
+
+/// 解析 EventKit 脚本的输出。
+#[test]
+fn calendar_parse_script_output() {
+    assert_eq!(calendar::parse_fetch(br#"{"denied":true,"status":2}"#).unwrap_err(), calendar::ACCESS_DENIED);
+    let f = calendar::parse_fetch(
+        br##"{"calendars":[{"id":"c1","title":"Work","source":"iCloud","color":"#ff8800"}],
+        "events":[{"id":"e1","calendar":"c1","title":"Sync","start":100,"end":200,"allDay":false,"location":""}]}"##,
+    )
+    .unwrap();
+    assert_eq!(f.calendars[0].color, "#ff8800");
+    assert_eq!((f.events[0].start, f.events[0].end, f.events[0].all_day), (100, 200, false));
+    assert!(calendar::parse_fetch(b"not json").is_err());
+}

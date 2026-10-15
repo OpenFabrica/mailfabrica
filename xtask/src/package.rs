@@ -87,6 +87,8 @@ pub(crate) fn build() -> Result<(), String> {
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+<key>NSCalendarsUsageDescription</key><string>MailFabrica shows your calendar events next to your mail in the calendar view. 日历视图里和邮件一起显示你的日程。</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>MailFabrica shows your calendar events next to your mail in the calendar view. 日历视图里和邮件一起显示你的日程。</string>
 </dict></plist>
 "#
     );

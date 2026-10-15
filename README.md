@@ -33,6 +33,7 @@ The screenshots come from demo mode (`--demo`); all accounts and messages in the
 - **AI writing assistant**: in a compose window, write a draft or rewrite your text (polish, more formal, friendlier, shorter, longer, translate). The result is a suggestion you accept (replace or append) or dismiss; only your own text is changed, never the signature or the quoted original. On replies and forwards the original message is given to the AI as context.
 - **AI quick reply**: drafts a short reply to the open message and fills the quick-reply box under the reading pane.
 - **One-click invoice export**: the "Invoices" virtual folder in the sidebar lists invoice emails from all accounts. Export opens a dialog where you pick a date range (this month, last month, custom dates…) and tick the messages to include; it then saves the invoice attachments (pdf/ofd/xml/zip) as `date_sender_originalname` and writes `invoices.csv` (date, sender, subject, amount, files, download links found in the body).
+- **Calendar view**: a month calendar that shows the mail you received each day next to your system calendar events (macOS Calendar via EventKit; asks for calendar access the first time), with Chinese lunar dates. Tick mailboxes and calendars on the left to choose what is shown; click a message to open it.
 - **Chinese and English UI, light and dark themes**.
 - **Scriptable**: every action is a command, callable from the control channel, the command line and MCP.
 
