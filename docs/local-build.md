@@ -33,7 +33,14 @@ flowchart LR
 
 只支持当前 macOS 本机架构，设置了 `CARGO_BUILD_TARGET` 时拒绝执行。复用 Cargo 的 `target_directory`，不覆盖既有产物目录；失败时清理临时目录。
 
-默认采用 ad-hoc 本地签名，未经过 Apple 公证。正式包需要成对设置以下非秘密配置名称，凭据保留在 macOS 钥匙串中：
+默认采用 ad-hoc 本地签名，未经过 Apple 公证。ad-hoc 签名每次打包都不同，钥匙串认不出新包，装上后读邮箱密码会再弹授权框（"始终允许"也要重新点）。
+本机有 Developer ID 证书时，只设置签名身份即可打签名的本地包：不公证，不检查版本号和工作区，但签名每次相同，点过一次"始终允许"后，之后的包都不会再问：
+
+```sh
+APPLE_SIGN_IDENTITY='Developer ID Application: Name (TEAMID)' cargo xtask package
+```
+
+正式包需要再加上公证 profile，两个都是非秘密配置名称，凭据保留在 macOS 钥匙串中：
 
 ```sh
 APPLE_SIGN_IDENTITY='Developer ID Application: Name (TEAMID)' \

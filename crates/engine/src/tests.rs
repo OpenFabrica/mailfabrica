@@ -930,6 +930,24 @@ fn system_secrets_file_mode() {
     }
 }
 
+/// 密码读一次就缓存：之后底层存储变了也不再去读（钥匙串每读一次都可能弹授权框）；
+/// 自己写入、删除时缓存跟着变；读不到的不缓存。
+#[test]
+fn system_secrets_cache_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let sec = SystemSecrets::file_only(dir.path().to_path_buf());
+    assert_eq!(sec.get("a"), None);
+    std::fs::write(dir.path().join("secrets.json"), r#"{"a": "pw"}"#).unwrap();
+    assert_eq!(sec.get("a").as_deref(), Some("pw"));
+    // 绕过 SystemSecrets 改文件：已缓存的值不变，说明没有再读底层存储
+    std::fs::write(dir.path().join("secrets.json"), r#"{"a": "changed"}"#).unwrap();
+    assert_eq!(sec.get("a").as_deref(), Some("pw"));
+    sec.set("a", "new").unwrap();
+    assert_eq!(sec.get("a").as_deref(), Some("new"));
+    sec.delete("a").unwrap();
+    assert_eq!(sec.get("a"), None);
+}
+
 #[test]
 fn default_root_honours_env() {
     // 只检查有值时的形状；不改环境变量，避免影响并行的其他测试

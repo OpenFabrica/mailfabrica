@@ -25,7 +25,8 @@ pub(crate) fn build() -> Result<(), String> {
     let revision = git(&["rev-parse", "HEAD"])?;
     let short = git(&["rev-parse", "--short=7", "HEAD"])?;
     let dirty = !git(&["status", "--porcelain"])?.is_empty();
-    let notarization = notary::Config::load(version, dirty)?;
+    let signing = notary::Config::load(version, dirty)?;
+    let notarization = signing.as_ref().filter(|c| c.notarizes());
     if notarization.is_some() && git(&["rev-parse", &format!("v{version}^{{commit}}")])? != revision {
         return Err("the release version tag must point to the current commit".into());
     }
@@ -58,7 +59,7 @@ pub(crate) fn build() -> Result<(), String> {
         let binary = binaries.join(executable);
         fs::copy(Path::new(target).join("release").join(executable), &binary).map_err(|e| format!("copy {executable}: {e}"))?;
         tool("/usr/bin/lipo", &["-verify_arch".as_ref(), arch.as_ref(), binary.as_os_str()])?;
-        sign(&binary, notarization.as_ref())?;
+        sign(&binary, signing.as_ref())?;
     }
     let iconset = stage.path().join("MailFabrica.iconset");
     fs::create_dir_all(&iconset).map_err(|e| e.to_string())?;
@@ -95,22 +96,22 @@ pub(crate) fn build() -> Result<(), String> {
         fs::copy(root().join(license), resources.join(license)).map_err(|e| e.to_string())?;
     }
     tool("/usr/bin/plutil", &["-lint".as_ref(), info.as_os_str()])?;
-    sign(&app, notarization.as_ref())?;
+    sign(&app, signing.as_ref())?;
     tool("/usr/bin/codesign", &["--verify".as_ref(), "--deep".as_ref(), "--strict".as_ref(), app.as_os_str()])?;
     let version_output = output(Command::new(binaries.join("mailfabrica")).arg("--version"))?;
     if version_output.trim() != format!("MailFabrica {version}") {
         return Err("packaged binary version does not match Cargo.toml".into());
     }
     std::os::unix::fs::symlink("/Applications", payload.join("Applications")).map_err(|e| e.to_string())?;
-    let notice = if notarization.is_some() {
-        "此包经过 Developer ID 签名和 Apple 公证。"
-    } else {
-        "此包使用本地临时签名，未进行 Apple 公证。"
+    let notice = match (&signing, notarization) {
+        (_, Some(_)) => "此包经过 Developer ID 签名和 Apple 公证。",
+        (Some(_), None) => "此包经过 Developer ID 签名，未进行 Apple 公证。",
+        (None, None) => "此包使用本地临时签名，未进行 Apple 公证。",
     };
     fs::write(payload.join("README.txt"), format!("MailFabrica {full_version}\n将 MailFabrica.app 拖入 Applications 后启动。\n命令行程序位于 MailFabrica.app/Contents/MacOS/mailfabrica-cli。\n{notice}\n")).map_err(|e| e.to_string())?;
     let audit = dist.join(format!("notary-{name}"));
     let mut submissions = Vec::new();
-    if let Some(config) = &notarization {
+    if let Some(config) = notarization {
         // 先公证并 staple 应用，再把带票据的应用放入 DMG，才能保证拖出后离线验证也成功。
         let archive = stage.path().join("application.zip");
         tool("/usr/bin/ditto", &["-c".as_ref(), "-k".as_ref(), "--keepParent".as_ref(), app.as_os_str(), archive.as_os_str()])?;
@@ -133,7 +134,7 @@ pub(crate) fn build() -> Result<(), String> {
         ],
     )?;
     tool("/usr/bin/hdiutil", &["verify".as_ref(), dmg.as_os_str()])?;
-    if let Some(config) = &notarization {
+    if let Some(config) = notarization {
         config.sign(&dmg, false)?;
         submissions.push(config.submit(&dmg, &audit)?);
         config.staple(&dmg, false)?;
@@ -142,7 +143,7 @@ pub(crate) fn build() -> Result<(), String> {
         "version": full_version, "revision": revision, "dirty": dirty, "arch": arch,
         "createdUnix": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs(),
         "sha256": { "mailfabrica": sha256(&binaries.join("mailfabrica"))?, "mailfabrica-cli": sha256(&binaries.join("mailfabrica-cli"))?, "dmg": sha256(&dmg)? },
-        "signature": if notarization.is_some() { "Developer ID Application" } else { "ad-hoc" },
+        "signature": if signing.is_some() { "Developer ID Application" } else { "ad-hoc" },
         "notarized": notarization.is_some(), "notarizationSubmissions": submissions,
     });
     fs::write(stage.path().join("build.json"), serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
@@ -156,7 +157,7 @@ pub(crate) fn build() -> Result<(), String> {
     Ok(())
 }
 
-/// 正式模式对每个组件独立签名，本地模式保留无证书的临时签名。
+/// 有 Developer ID 身份时对每个组件独立签名（正式包和签名的本地包都是），否则用无证书的临时签名。
 fn sign(path: &Path, config: Option<&notary::Config>) -> Result<(), String> {
     match config {
         Some(config) => config.sign(path, true),

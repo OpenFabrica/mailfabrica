@@ -1,7 +1,10 @@
 //! 系统密码存储：macOS 钥匙串 / Windows 凭据管理器（keyring crate）；其他系统或设置了
 //! `MAILFABRICA_SECRETS=file` 时，退回到数据目录下权限 0600 的 `secrets.json`。
+//!
+//! 读到的密码缓存在内存里，每个条目每次启动只读一次底层存储：程序每次联网（收信、点开邮件下载正文）都要取密码，
+//! 而 macOS 钥匙串在用户只点了"允许"（不是"始终允许"）时每读一次就弹一次授权框。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -18,6 +21,8 @@ pub struct SystemSecrets {
     file_mode: bool,
     /// 文件模式下的读写锁，防止同一进程里并发写坏文件。
     lock: Mutex<()>,
+    /// 已读到或写入的密码（账户 id → 密码）。读不到的不缓存，之后还会再试。
+    cache: Mutex<HashMap<String, String>>,
 }
 
 impl SystemSecrets {
@@ -25,13 +30,13 @@ impl SystemSecrets {
     pub fn new(root: PathBuf) -> SystemSecrets {
         let forced = std::env::var("MAILFABRICA_SECRETS").is_ok_and(|v| v.eq_ignore_ascii_case("file"));
         let file_mode = forced || !cfg!(any(target_os = "macos", target_os = "windows"));
-        SystemSecrets { root, file_mode, lock: Mutex::new(()) }
+        SystemSecrets { root, file_mode, lock: Mutex::new(()), cache: Mutex::default() }
     }
 
     /// 强制用文件模式（测试用，不碰系统钥匙串）。
     #[cfg(test)]
     pub(crate) fn file_only(root: PathBuf) -> SystemSecrets {
-        SystemSecrets { root, file_mode: true, lock: Mutex::new(()) }
+        SystemSecrets { root, file_mode: true, lock: Mutex::new(()), cache: Mutex::default() }
     }
 
     /// `secrets.json` 的路径。
@@ -87,7 +92,37 @@ impl SystemSecrets {
 }
 
 impl SecretStore for SystemSecrets {
+    /// 先查内存缓存，没有再读底层存储。读的时候一直拿着缓存锁：几个线程同时要同一个密码时只读（只弹框）一次。
     fn get(&self, account: &str) -> Option<String> {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = cache.get(account) {
+            return Some(v.clone());
+        }
+        let v = self.read(account)?;
+        cache.insert(account.to_string(), v.clone());
+        Some(v)
+    }
+
+    /// 写底层存储，成功后更新缓存。
+    fn set(&self, account: &str, secret: &str) -> Result<()> {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        self.write(account, secret)?;
+        cache.insert(account.to_string(), secret.to_string());
+        Ok(())
+    }
+
+    /// 删底层存储里的条目，成功后从缓存里去掉。
+    fn delete(&self, account: &str) -> Result<()> {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        self.remove(account)?;
+        cache.remove(account);
+        Ok(())
+    }
+}
+
+impl SystemSecrets {
+    /// 从底层存储（文件或系统钥匙串）读密码，不经过缓存。
+    fn read(&self, account: &str) -> Option<String> {
         if self.file_mode {
             let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
             return self.read_file().get(account).cloned();
@@ -100,7 +135,8 @@ impl SecretStore for SystemSecrets {
         None
     }
 
-    fn set(&self, account: &str, secret: &str) -> Result<()> {
+    /// 把密码写进底层存储，不经过缓存。
+    fn write(&self, account: &str, secret: &str) -> Result<()> {
         if self.file_mode {
             return self.update_file(|m| {
                 m.insert(account.to_string(), secret.to_string());
@@ -114,7 +150,8 @@ impl SecretStore for SystemSecrets {
         Err(MailError::Unsupported("system keychain".into()))
     }
 
-    fn delete(&self, account: &str) -> Result<()> {
+    /// 从底层存储删掉条目，不经过缓存。
+    fn remove(&self, account: &str) -> Result<()> {
         if self.file_mode {
             return self.update_file(|m| {
                 m.remove(account);
