@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -90,8 +91,26 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    wait_exit(port, &executable)?;
     println!("VERIFIED: automatic application replacement, GUI restart and preserved user files");
     Ok(())
+}
+
+/// 等更新后重启的程序真正退出：控制端口不再接受连接，Windows 上程序文件能以写方式打开（运行中的程序打不开）。
+/// `app.quit` 只是发出退出请求；不等它退完，调用方马上删临时安装目录时，Windows 会因为程序文件还被占用而失败。
+fn wait_exit(port: u16, executable: &Path) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let closed = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(200)).is_err();
+        let unlocked = !cfg!(windows) || fs::OpenOptions::new().write(true).open(executable).is_ok();
+        if closed && unlocked {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("Updated GUI did not exit after app.quit".into());
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 /// 有界本地协议请求，仅访问本次临时演示程序的控制端口。
