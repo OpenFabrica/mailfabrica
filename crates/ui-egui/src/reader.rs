@@ -1,5 +1,5 @@
 //! 右侧阅读窗格：主题、发件人/收件人/抄送/时间、红旗开关、「HTML | 纯文本」切换、附件卡片、正文，
-//! 底部是 Foxmail 式的快速回复框。
+//! 邮件头和底部的 Foxmail 式快速回复框固定，只有中间的附件与正文区域滚动。
 //!
 //! 列表里选中一个主题组（同主题归成一行）时，窗格显示"主题包括“…”的所有邮件 · N"和组里每封邮件
 //! （发件人、预览、日期），点一封打开它；打开的邮件属于某个主题组时，顶上有一条返回这个组的横条。
@@ -272,15 +272,20 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
         group_back(app, ui, &g, &t);
     }
     quick_reply(app, ui, &key, meta.as_ref(), view.as_deref());
-    egui::ScrollArea::vertical().id_salt(("reader_scroll", key.to_string())).auto_shrink([false, false]).show(ui, |ui| {
-        egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 20, bottom: 24 }).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+    // 邮件头放在滚动容器之外，读长邮件时仍能看到收发件人并切换正文格式。
+    egui::Panel::top("reader_header").frame(egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 20, bottom: 0 })).show(
+        ui,
+        |ui| {
             header(app, ui, &key, meta.as_ref(), view.as_deref(), lang, &t);
             ui.add_space(12.0);
             let r = ui.max_rect();
             let y = ui.cursor().top();
             ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, t.separator));
-            ui.add_space(14.0);
+        },
+    );
+    egui::ScrollArea::vertical().id_salt(("reader_scroll", key.to_string())).auto_shrink([false, false]).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 14, bottom: 24 }).show(ui, |ui| {
+            ui.set_width(ui.available_width());
             match &body {
                 BodyState::Ready(v) => {
                     if !v.attachments.iter().all(|a| a.inline) {
