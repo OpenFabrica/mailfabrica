@@ -7,6 +7,7 @@ from pathlib import Path
 import socket
 import struct
 import subprocess
+import re
 import tarfile
 import tempfile
 import time
@@ -122,7 +123,8 @@ def main():
                 result = subprocess.run(["ldd", str(path)], text=True, capture_output=True, check=True)
                 assert "not found" not in result.stdout, result.stdout
         version = subprocess.check_output([str(gui), "--version"], text=True, encoding="utf-8", timeout=30).strip()
-        assert version == f"MailFabrica {manifest['version']}"
+        # 开发版的清单版本带 git 短哈希（0.1.5-dev-1a2b3c4，有改动时再加 +），程序自己只报 Cargo 版本（0.1.5-dev）
+        assert version == "MailFabrica " + re.sub(r"-dev-[0-9a-f]{7}\+?$", "-dev", manifest["version"]), version
         response = subprocess.check_output([str(cli), "--demo", "list", "--limit", "2", "--json"], text=True, encoding="utf-8", timeout=60)
         assert json.loads(response)
         with socket.socket() as reserve:
