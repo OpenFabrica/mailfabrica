@@ -12,8 +12,11 @@
 #![forbid(unsafe_code)]
 
 mod compat;
+mod document;
 mod net;
 mod resources;
+
+pub use document::{MAX_DOCUMENT_BYTES, prepare_document};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

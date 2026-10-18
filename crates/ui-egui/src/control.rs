@@ -107,6 +107,7 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
     json!({
         "ui": serde_json::to_value(&app.ui).unwrap_or_default(),
         "window": [r.width(), r.height()],
+        "visibility": ctx.input(|i| json!({"occluded": i.viewport().occluded, "minimized": i.viewport().minimized, "focused": i.viewport().focused})),
         "panes": {
             "toolbar": rect_json(app.layout.toolbar),
             "sidebar": rect_json(app.layout.sidebar),
@@ -139,6 +140,7 @@ pub fn inspect(app: &MailApp, ctx: &egui::Context) -> Json {
         "status": {"busy": st.busy, "text": st.text, "errors": st.errors, "lastSync": st.last_sync},
         "quickReply": app.reader.quick_reply,
         "reader": json!({
+            "browser": app.reader.browser.inspect(),
             "mode": app.reader.shown,
             "hasHtml": reader_has_html(app),
             // 阅读窗格显示的内容：主题组列表、单封邮件、或什么都没有
@@ -230,12 +232,17 @@ pub fn handle(app: &mut MailApp, ctx: &egui::Context, method: &str, p: &Json) ->
                 "ui.darkMode",
                 "ui.language",
                 "ui.focusSearch",
+                "ui.focusWindow",
                 "ui.quickReply",
                 "ui.saveAttachment",
                 "ui.attachFiles",
                 "ui.openUrl",
                 "ui.toggleCollapsed",
                 "ui.readerMode",
+                "ui.readerReload",
+                "ui.readerCopy",
+                "ui.readerScroll",
+                "ui.readerSelect",
                 "ui.calendar",
                 "ui.message.dismiss",
             ] {

@@ -50,7 +50,7 @@ cargo xtask package
 
 正式模式要求版本不含 `-dev`、工作区完全干净，`v<version>` 注释标签指向当前 HEAD 且属于本地 `master`。发布前还必须确认标签已在 `origin/master` 上。打包不会创建标签或推送。
 
-打包为两个可执行文件及应用启用 Developer ID、安全时间戳与 Hardened Runtime。先提交应用 ZIP 给 Apple，等待 Accepted 并 staple 应用，再生成、签名、公证与 staple DMG；两者都验证票据和 Gatekeeper 判定。`dist/notary-<包名>/` 保存 submission UUID、结果与 Apple 日志；等待超时不等于成功，按 UUID 查询后处理。
+打包为两个可执行文件及应用启用 Developer ID、安全时间戳与 Hardened Runtime，并对 DMG 签名；只签名的本地包同样签名 DMG。先提交应用 ZIP 给 Apple，等待 Accepted 并 staple 应用，再生成、签名、公证与 staple DMG；两者都验证票据和 Gatekeeper 判定。`dist/notary-<包名>/` 保存 submission UUID、结果与 Apple 日志；等待超时不等于成功，按 UUID 查询后处理。
 
 `build.json` 记录签名方式、公证状态、两个 submission UUID，以及 staple 后最终文件的 SHA-256。公开发布必须使用这些最终文件，不可重新签名或修改它们。
 

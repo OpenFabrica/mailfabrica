@@ -21,6 +21,8 @@ const KEEP_MARGIN: u32 = 2;
 /// 一块 HTML 的显示状态：渲染器句柄和已上传的图块纹理。阅读窗格的正文、写信窗口的原文引用都用它。
 pub struct HtmlPane {
     html: HtmlView,
+    /// 创建时的全局图片策略，改变后重建渲染器。
+    pub(crate) remote_images: bool,
     /// 图块序号 → (代, 纹理)。新一代的图块到之前先显示旧的，免得闪白。
     textures: HashMap<u32, (u64, TextureHandle)>,
     /// 正在按住鼠标拖动（选文字）。
@@ -32,11 +34,11 @@ pub struct HtmlPane {
 }
 
 impl HtmlPane {
-    /// 开始渲染 `html`：远程图片自动加载，`inline` 是 `cid:` 图片（Content-ID → 数据）。
-    pub fn new(ctx: &egui::Context, html: &str, inline: Vec<(String, Vec<u8>)>) -> HtmlPane {
+    /// 开始渲染 `html`：按全局设置加载远程图片，`inline` 是 `cid:` 图片（Content-ID → 数据）。
+    pub fn new(ctx: &egui::Context, html: &str, inline: Vec<(String, Vec<u8>)>, remote_images: bool) -> HtmlPane {
         let ctx = ctx.clone();
-        let options = Options { remote_images: true, inline, wake: Arc::new(move || ctx.request_repaint()) };
-        HtmlPane { html: HtmlView::new(html, options), textures: HashMap::new(), dragging: false, last_hover: None, rect: None }
+        let options = Options { remote_images, inline, wake: Arc::new(move || ctx.request_repaint()) };
+        HtmlPane { html: HtmlView::new(html, options), remote_images, textures: HashMap::new(), dragging: false, last_hover: None, rect: None }
     }
 
     /// 按可用宽度画出来。渲染器失败时返回 `Err`（调用方改用别的显示方式）；点了链接返回 `Ok(Some(地址))`。
@@ -140,8 +142,9 @@ pub struct HtmlBody {
 
 /// 画阅读窗格的 HTML 正文。渲染器失败时返回 `false`（调用方改用别的显示方式）。
 pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, html: &str) -> bool {
-    if !app.reader.html.as_ref().is_some_and(|b| b.key == *key && Arc::ptr_eq(&b.view, v)) {
-        let pane = HtmlPane::new(ui.ctx(), html, app.session.inline_parts(key));
+    if !app.reader.html.as_ref().is_some_and(|b| b.key == *key && Arc::ptr_eq(&b.view, v) && b.pane.remote_images == app.session.prefs.remote_images)
+    {
+        let pane = HtmlPane::new(ui.ctx(), html, app.session.inline_parts(key), app.session.prefs.remote_images);
         app.reader.html = Some(HtmlBody { key: key.clone(), view: v.clone(), pane });
     }
     let lang = app.lang();

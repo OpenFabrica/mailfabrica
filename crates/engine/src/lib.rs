@@ -68,6 +68,8 @@ pub type Result<T> = std::result::Result<T, EngineError>;
 pub struct Prefs {
     /// 打开邮件后自动标为已读。
     pub mark_read_on_open: bool,
+    /// HTML 正文和写信引用自动加载远程图片，默认开启。
+    pub remote_images: bool,
     /// 自动收取间隔（分钟），0 = 不自动收取。
     pub sync_interval_minutes: u32,
     /// 每个文件夹首次同步最多取多少封（最新的）。
@@ -98,6 +100,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             mark_read_on_open: true,
+            remote_images: true,
             sync_interval_minutes: 10,
             sync_limit: 500,
             prefetch: 50,

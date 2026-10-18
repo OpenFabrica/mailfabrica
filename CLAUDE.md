@@ -34,7 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **写信状态全在引擎**（`Compose`）：`body` 纯文本 + `doc: RichDoc`（超文本时 `body == doc.text()`）。
   超文本回复/转发 HTML 邮件时，原文不进可编辑正文，而是只读的 `Compose::quote`（HTML + 纯文本 + 内嵌图片）；
   发送时拼成 Gmail 式 `gmail_quote`，内嵌图片走 multipart/related；存草稿再打开时靠 `data-mf-quote` 标记拆回来。
-- **HTML 显示**：`crates/html` 在专用线程里用 blitz 排版、vello_cpu 画 512px 高的图块；
+- **HTML 显示**：macOS 阅读正文由 `apps/mailfabrica/src/browser.rs` 嵌入 WKWebView，`ui-egui::browser` 提供视口与状态；详情见 `docs/html-preview.md`。其他平台和写信引用使用 `crates/html`：专用线程里用 blitz 排版、vello_cpu 画 512px 高的图块；
   `ui-egui/src/htmlbody.rs` 的 `HtmlPane` 把图块贴成纹理，阅读窗格和写信窗口的原文引用都用它。渲染器出错时退回 `RichDoc` 渲染。
   - blitz 锁在 `=0.3.0-beta.2`。已知的坑：没有 `base_url` 时 `//host` 地址会 panic（用占位 base）；`<link>` 样式表会阻塞绘制（解析前去掉）；
     `NetProvider` 每个请求都必须回调（失败给空数据）；链接可点区域用 `node_client_rects`，不要用 `hit()`（带 padding 的按钮会错位）。

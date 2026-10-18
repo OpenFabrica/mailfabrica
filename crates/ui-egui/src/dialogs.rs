@@ -269,7 +269,7 @@ pub fn confirm(app: &mut MailApp) -> Result<Json, String> {
                 app.ui.language = l;
             }
             let mut p = Map::new();
-            for k in ["markReadOnOpen", "groupBySubject", "saveSent", "chineseQuotes", "quoteOnReply", "composeRich"] {
+            for k in ["markReadOnOpen", "remoteImages", "groupBySubject", "saveSent", "chineseQuotes", "quoteOnReply", "composeRich"] {
                 p.insert(k.into(), json!(d.b(k)));
             }
             let interval =
@@ -795,6 +795,9 @@ fn settings(ui: &mut Ui, d: &mut Dialog, lang: Language) {
         ui.end_row();
         ui.label(egui::RichText::new(lang.t("Reading")).color(t.text_dim));
         check(ui, d, "markReadOnOpen", lang.t("Mark messages as read when opened"));
+        ui.end_row();
+        ui.label("");
+        check(ui, d, "remoteImages", lang.t("Automatically load remote images"));
         ui.end_row();
         ui.label("");
         check(ui, d, "groupBySubject", lang.t("Group messages with the same subject"));

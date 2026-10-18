@@ -663,11 +663,11 @@ fn quote_view(app: &mut MailApp, ui: &mut Ui, id: u64, q: &ComposeQuote) {
             app.defer("compose.removeQuote", json!({"id": id}));
         }
     });
-    if !app.composer.quotes.get(&id).is_some_and(|(html, _)| *html == q.html) {
+    if !app.composer.quotes.get(&id).is_some_and(|(html, pane)| *html == q.html && pane.remote_images == app.session.prefs.remote_images) {
         let inline = q.inline.iter().filter_map(|a| Some((a.content_id.clone()?, a.data.as_ref().clone()))).collect();
         // 引用是 HTML 片段：外层不要默认的页边距，左边和正文对齐
         let doc = format!("<!DOCTYPE html><html><body style=\"margin:0\">{}</body></html>", q.html);
-        app.composer.quotes.insert(id, (q.html.clone(), HtmlPane::new(ui.ctx(), &doc, inline)));
+        app.composer.quotes.insert(id, (q.html.clone(), HtmlPane::new(ui.ctx(), &doc, inline, app.session.prefs.remote_images)));
     }
     let Some((_, pane)) = app.composer.quotes.get_mut(&id) else { return };
     match pane.show(ui, lang) {

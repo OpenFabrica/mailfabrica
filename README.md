@@ -28,7 +28,7 @@ The screenshots come from demo mode (`--demo`); all accounts and messages in the
 - **Accounts**: server settings filled in from the address (QQ/Foxmail, 163, 126, yeah, Sina, Aliyun, 139, Gmail, Outlook, iCloud, Yahoo, Zoho) and editable by hand; passwords are kept in the system keychain.
 - **Protocols**: IMAP4rev1 (incremental UID sync, MOVE/UIDPLUS, Chinese folder names, the NetEase ID command) + SMTP (465 TLS / 587 STARTTLS, AUTH PLAIN/LOGIN).
 - **Local storage**: one directory per account with a JSON index, the original `.eml` files and the address book; readable offline.
-- **HTML mail**: laid out with blitz and rendered on the CPU, so CSS layout, buttons and images look as designed; remote images are loaded only from public internet addresses.
+- **HTML mail**: macOS uses the system WKWebView for browser layout, selection and scrolling, with plain-text fallback. Remote images are enabled by default and controlled in global settings. Other platforms and quoted originals in the composer use the Blitz CPU renderer. [Reading behavior](docs/mail-reading.md).
 - **Group by subject**: messages with the same subject (ignoring prefixes like `Re:`, `Fwd:`, `回复：`) share one row; turn it off from the list menu or in Settings.
 - **AI writing assistant**: in a compose window, write a draft or rewrite your text (polish, more formal, friendlier, shorter, longer, translate). The result is a suggestion you accept (replace or append) or dismiss; only your own text is changed, never the signature or the quoted original. On replies and forwards the original message is given to the AI as context.
 - **AI quick reply**: drafts a short reply to the open message and fills the quick-reply box under the reading pane.

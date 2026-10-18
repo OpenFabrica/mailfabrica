@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod brands;
+pub mod browser;
 pub mod calendar;
 pub mod compose;
 pub mod control;
@@ -112,6 +113,8 @@ pub struct MailApp {
     pub search: String,
     /// 下一帧把焦点放到搜索框。
     pub focus_search: bool,
+    /// 控制通道请求前置窗口；在不绘制 UI 的逻辑阶段也要处理。
+    focus_window: bool,
     /// 本帧界面收集到的命令，帧末统一执行（避免边读状态边改状态）。
     pub actions: Vec<(String, Json)>,
     pub list: list::ListState,
@@ -148,6 +151,7 @@ impl MailApp {
             toast: None,
             search: seen_query.clone(),
             focus_search: false,
+            focus_window: false,
             actions: Vec::new(),
             list: list::ListState::default(),
             reader: reader::ReaderState::default(),
@@ -226,6 +230,10 @@ impl MailApp {
                 self.focus_search = true;
                 Ok(Json::Null)
             }
+            "ui.focusWindow" => {
+                self.focus_window = true;
+                Ok(Json::Null)
+            }
             "ui.message.dismiss" => {
                 self.message = None;
                 Ok(Json::Null)
@@ -238,6 +246,7 @@ impl MailApp {
             "ui.calendar" => calendar::command(self, p),
             "ui.quickReply" => self.quick_reply(p),
             "ui.readerMode" => self.reader_mode(p),
+            "ui.readerReload" | "ui.readerCopy" | "ui.readerScroll" | "ui.readerSelect" => browser::command(self, id, p),
             "ui.saveAttachment" => self.save_attachment(p),
             "ui.attachFiles" => self.attach_files(p),
             "ui.exportInvoices" => self.export_invoices(p),
@@ -420,6 +429,11 @@ impl MailApp {
             ctx.request_repaint();
         }
         control::poll(self, ctx);
+        if std::mem::take(&mut self.focus_window) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
         // 忙时刷新快一点看进度；空闲时也定期醒来，让引擎做自动收取
         let ms = if self.session.status().busy || self.session.update().busy() { 250 } else { 3000 };
         ctx.request_repaint_after(std::time::Duration::from_millis(ms));
@@ -448,6 +462,11 @@ impl MailApp {
 
     /// 画整个窗口。
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.reader.browser.request = None;
+        if self.reader.browser.enabled {
+            let key = self.focused();
+            self.reader.browser.sync_focus(key.as_ref(), self.session.prefs.remote_images);
+        }
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
@@ -647,6 +666,20 @@ pub fn now_ms() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 窗口被遮挡时仍可经逻辑阶段前置，且前置请求只消费一次。
+    #[test]
+    fn focus_window_command_runs_without_a_ui_pass() {
+        let ctx = egui::Context::default();
+        let mut app = MailApp::new(Session::demo().expect("demo"), Services::default());
+        app.run("ui.focusWindow", json!({})).expect("focus");
+        for expected in [true, false] {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+            output.textures_delta.clear();
+            let focused = output.viewport_output.values().any(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Focus)));
+            assert_eq!(focused, expected);
+        }
+    }
 
     /// 弹窗重绘时背景遮罩应保持固定透明度，包括后台唤醒与布局变化。
     #[test]

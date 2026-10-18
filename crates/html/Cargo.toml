@@ -22,3 +22,7 @@ parley = { workspace = true }
 ureq = { workspace = true }
 # 只为打开 blitz 解码图片需要的格式（blitz-dom 依赖 image 时关掉了全部默认格式）
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+
+# 系统 WebView 的展示文档清洗；不改变 MIME 原文。
+ammonia = "4.2.4"
+html5ever = "0.40.1"

@@ -2,6 +2,46 @@
 
 邮件模板经常用嵌套表格、`cellpadding`、`cellspacing` 和单元格背景组织内容。阅读器需要尽快显示正文，并保留模板的间距、按钮、图片和中文排版。
 
+## 系统浏览器正文（macOS）
+
+macOS 桌面阅读窗格用系统 WKWebView 排版原始 HTML 的清洗副本，不再用自绘图块模拟浏览器。
+邮件头、附件和快速回复仍由 egui 显示，正文拥有自己的滚动、选择和复制。
+Windows/Linux 以及写信窗口的只读引用仍使用下文的 Blitz 渲染器。
+
+`ui-egui::browser` 只定义正文视口和状态；`apps/mailfabrica/src/browser.rs` 负责原生控件，
+通过 eframe 的安全窗口句柄创建子视图，不向引擎引入窗口依赖，也不增加 unsafe 代码。
+`html::prepare_document` 使用 HTML5 清洗器保留表格、class、内联 CSS 和媒体查询，移除脚本、
+表单、子框架、自动跳转和 base。原始 `.eml` 与回复正文不被改写。
+
+```mermaid
+flowchart LR
+    A[MIME 解码的原始 HTML] --> B[有界展示文档清洗]
+    B --> C[非持久 WKWebView]
+    D[本封邮件 CID 图片] --> C
+    E[全局远程图片设置] --> C
+    C --> F{有可见内容?}
+    F -->|是| G[原生正文视口]
+    F -->|否或失败超时| H[纯文本与重试入口]
+```
+
+- 网页 JavaScript 在 WKWebView 配置中禁用，文档再以 CSP 禁止脚本、子框架、表单、外部样式表和字体。
+  宿主只执行固定的可见内容检查脚本，没有网页 IPC、命令或凭据接口。
+- 全局 `Prefs.remote_images`（JSON `remoteImages`）默认开启；旧配置缺少该字段时同样开启。
+  “设置 → 阅读 → 自动加载远程图片”通过 `app.prefs {remoteImages: bool}` 持久化；换信、正文刷新和重启沿用此值。
+  改变设置会重建当前 WebView，关闭时 CSP 只允许 `cid:` 和 `data:` 图片；Blitz 正文和写信引用也重建以应用设置。
+  重试对应 `ui.readerReload {}`，控制通道和 MCP 均可调用。
+- CID 从当前邮件附件的内存副本提供，只接受可识别的 PNG/JPEG/GIF/WebP/BMP/ICO，单张 8 MiB、合计 20 MiB、最多 128 项。
+  自定义协议不能访问磁盘或其他邮件；原生浏览器使用非持久数据存储，不共享登录态。
+- 网页内的 http(s)、mailto 和 tel 链接交给既有 `ui.openUrl` 系统处理，禁止正文导航、弹出窗口和下载。
+  菜单、模态框、写信、日历、纯文本模式或邮件切换时隐藏正文原生覆盖层，防止遮住操作界面。
+- HTML 原文超过 2 MiB、初始化失败、10 秒内未出现可见正文或加载完成后没有可见文字/图片时，显示纯文本并提供重试。
+  代号及每实例事件队列隔离异步结果，旧邮件的回调不能更新新邮件。
+- 正文在 DOM 提交后即可显示，不等待慢速远程图片下载完成。
+- `ui.inspect.reader.browser` 提供 `backend/status/error/remoteImages/generation/visible/rect`。
+  原生 WebView 不在 egui 的 GPU 纹理里，`ui.screenshot` 不包含正文覆盖层；视觉验收应捕获真实 macOS 窗口。
+
+使用说明见 [邮件正文阅读](mail-reading.md)。
+
 ## 下载规则
 
 - 每个账户仍只有一条工作线程、一条复用的 IMAP 连接。后台线程只发事件，引擎负责存储和正文缓存。
@@ -10,7 +50,7 @@
 - 预取只选最新且小于 512 KiB 的邮件，每批最多 8 封。真实连接使用 `UID FETCH ... BODY.PEEK[]`，不改变已读状态。断线仍由原有连接恢复逻辑处理；缺失 UID 不伪造正文。
 - 已在当前同步期间为用户下载的正文不重复预取，避免重复网络传输和重建预览。UIDVALIDITY 变化时清除对应去重记录。
 
-## 预览概念与流程
+## Blitz 预览概念与流程（其他平台与写信引用）
 
 ### 纯文本正文和列表摘要
 
@@ -54,6 +94,8 @@ flowchart LR
 ```sh
 cargo test -p mailfabrica-html -p mailfabrica-sync -p mailfabrica-proto
 cargo xtask ci
+# macOS：构建后用一次性离线邮箱验证真实 WKWebView（只请求脚本自建的回环图片服务）
+python3 xtask/browser_qa.py target/debug/mailfabrica --result /tmp/browser-qa.json
 cargo run -p mailfabrica-html --example preview -- /tmp/input.html /tmp/preview.png
 ```
 

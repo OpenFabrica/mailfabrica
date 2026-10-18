@@ -4,7 +4,7 @@
 //! 列表里选中一个主题组（同主题归成一行）时，窗格显示"主题包括“…”的所有邮件 · N"和组里每封邮件
 //! （发件人、预览、日期），点一封打开它；打开的邮件属于某个主题组时，顶上有一条返回这个组的横条。
 //!
-//! 有 HTML 正文时默认按格式显示：用 blitz 排版渲染（[`crate::htmlbody`]），效果接近浏览器，远程图片自动加载。
+//! 有 HTML 正文时默认按格式显示：macOS 宿主用系统 WKWebView（[`crate::browser`]），其他宿主用 Blitz 图块。
 //! 渲染器出错时退回旧办法：`RichDoc::from_html` 转成富文本，用和写信编辑器相同的排版（[`crate::richview`]）。
 //! 纯文本模式（或没有 HTML）显示 `MessageView.text`，自动识别网址。
 
@@ -26,6 +26,8 @@ use crate::{Language, MailApp};
 /// 阅读窗格的界面状态。
 #[derive(Default)]
 pub struct ReaderState {
+    /// 原生系统浏览器由桌面宿主启用，核心引擎不依赖它。
+    pub browser: crate::browser::BrowserBody,
     /// 快速回复框里的文字。
     pub quick_reply: String,
     /// 已经填进快速回复框的 AI 草稿序号（`AiReply::seq`），新结果到了才填。
@@ -285,6 +287,31 @@ pub fn show(app: &mut MailApp, ui: &mut Ui) {
             ui.painter().line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, t.separator));
         },
     );
+    if app.reader.browser.enabled
+        && app.reader.wants_html(&key)
+        && let BodyState::Ready(v) = &body
+        && v.html.is_some()
+    {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 14, bottom: 12 }).show(ui, |ui| {
+            let width = ui.available_width();
+            if !v.attachments.iter().all(|a| a.inline) {
+                // 附件很多时单独滚动，必须给原生正文保留视口，不能把它挤出阅读区域。
+                egui::ScrollArea::vertical()
+                    .id_salt(("reader_attachments", key.to_string()))
+                    .max_height((ui.available_height() * 0.3).clamp(40.0, 160.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| attachments(app, ui, &key, v, &t));
+            }
+            ui.set_width(width);
+            if crate::browser::show(app, ui, &key, v) {
+                app.reader.shown = Some("html");
+            } else {
+                app.reader.shown = Some("plain");
+                egui::ScrollArea::vertical().id_salt(("reader_fallback", key.to_string())).show(ui, |ui| body_text(app, ui, &key, v, &t));
+            }
+        });
+        return;
+    }
     egui::ScrollArea::vertical().id_salt(("reader_scroll", key.to_string())).auto_shrink([false, false]).show(ui, |ui| {
         egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 26, top: 14, bottom: 24 }).show(ui, |ui| {
             ui.set_width(ui.available_width());

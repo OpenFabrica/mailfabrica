@@ -37,6 +37,29 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 要等结果，轮询 `app.status`（看 `busy` 变成 `false`）和 `message.get`（看 `state` 变成 `ready`）。
 无界面的 `mailfabrica-cli mcp` 会自己等后台任务结束。
 
+## macOS 原生 HTML 正文
+
+自动化视觉操作前可调用 `ui.focusWindow {}` 请求恢复并前置窗口，并检查 `ui.inspect.visibility` 确认系统已执行。macOS 限制后台激活时，需经原生窗口操作前置应用。eframe 会跳过完全被遮挡或最小化窗口的 UI 布局，
+不能把后台逻辑仍能应答当作正文视口已重建。浏览器已有文档的回调和超时在后台仍会处理。
+
+
+`ui.inspect.reader.browser` 返回 `backend`（`wkwebview` / `blitz`）、加载 `status`、`error`、
+`remoteImages`、`generation`、原生层 `visible`、`rect` 和可见内容的尺寸/图片计数 `metrics`。
+正文状态为 `ready` 后可调用以下命令，均经 `engine.execute`、直接方法名或 MCP 控制模式调用：
+
+| 命令 | 参数 | 行为 |
+|---|---|---|
+| `app.prefs` | `{remoteImages: bool}` | 全局自动加载远程图片，默认开启；保存后正文重载，换信及重启保留，设置中的阅读选项使用同一命令 |
+| `ui.readerReload` | `{}` | 重试当前邮件 HTML，不重新下载原文 |
+| `ui.readerScroll` | `{top: number}` | 滚动到 CSS 像素位置，范围 0–200000 |
+| `ui.readerSelect` | `{start: number, end: number}` | 按正文 Unicode 字符偏移选择文本，跳过样式和脚本文本；最大 1000000 |
+| `ui.readerCopy` | `{}` | 复制原生正文当前选区到剪贴板 |
+
+操作异步排队，旧邮件的任务在换信时丢弃。选择、复制与滚动由宿主固定脚本完成，不能传入任意网页脚本。
+`ui.readerMode {mode: "html" / "plain"}` 仍可切换显示方式。
+原生子视图不接收 egui 的合成 `ui.drag` / `ui.key`；自动化正文请用上面的命令或真实系统输入。
+`ui.screenshot` 只捕获 egui GPU 画面，**不包含 WKWebView 覆盖层**；正文视觉验收需要真实窗口截图。
+
 ## 按主题归类（学 Foxmail）
 
 偏好 `groupBySubject`（默认开）打开时，列表里主题相同的邮件合成一行：去掉开头的 `Re:`、`Fwd:`、`回复：`、

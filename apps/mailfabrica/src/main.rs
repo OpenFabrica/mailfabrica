@@ -12,6 +12,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+#[cfg(target_os = "macos")]
+mod browser;
 mod control_server;
 
 use std::path::{Path, PathBuf};
@@ -22,6 +24,8 @@ use mailfabrica_ui_egui::{MailApp, Services};
 
 /// eframe 的应用外壳：把每帧逻辑和界面交给 `MailApp`，退出时保存偏好。
 struct App {
+    #[cfg(target_os = "macos")]
+    browser: browser::Browser,
     app: MailApp,
     /// `ui.json` 所在目录；None = 不保存（演示模式或禁用）。
     prefs_dir: Option<PathBuf>,
@@ -32,6 +36,9 @@ struct App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.logic(ctx);
+        // 窗口被遮挡时 eframe 不绘制 UI，但浏览器的回调、资源观察和超时仍须推进。
+        #[cfg(target_os = "macos")]
+        self.browser.update(&mut self.app, _frame, ctx);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -40,6 +47,8 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        #[cfg(target_os = "macos")]
+        self.browser.update(&mut self.app, _frame, ui.ctx());
         if self.app.layout.toolbar.is_some()
             && let Some(stage) = self.update_ack.take()
             && let Err(error) = mailfabrica_update::acknowledge(&stage)
@@ -201,6 +210,7 @@ fn main() -> eframe::Result<()> {
     }
     let prefs_dir = root.filter(|_| std::env::var_os("MAILFABRICA_NO_PREFS").is_none());
     let mut app = MailApp::new(session, services());
+    app.reader.browser.enabled = cfg!(target_os = "macos");
     if let Some(dir) = &prefs_dir {
         load_ui_state(&mut app, dir);
     }
@@ -224,7 +234,13 @@ fn main() -> eframe::Result<()> {
                     Err(e) => eprintln!("control channel on port {port}: {e}"),
                 }
             }
-            Ok(Box::new(App { app, prefs_dir, update_ack: args.update_ack }))
+            Ok(Box::new(App {
+                app,
+                prefs_dir,
+                update_ack: args.update_ack,
+                #[cfg(target_os = "macos")]
+                browser: browser::Browser::default(),
+            }))
         }),
     )
 }

@@ -760,6 +760,13 @@ fn prefs_contacts_and_folders() {
     assert!(s.execute("app.prefs", json!({"nope": 1})).is_err());
     assert!(s.execute("app.prefs", json!({"syncLimit": "x"})).is_err());
     assert_eq!(s.execute("app.prefs", json!({})).unwrap()["chineseQuotes"], false);
+    // 旧配置缺少字段时默认开启，显式关闭必须校验类型并持久化。
+    let legacy: Prefs = serde_json::from_value(json!({"markReadOnOpen": false})).unwrap();
+    assert!(legacy.remote_images);
+    assert_eq!(s.execute("app.prefs", json!({})).unwrap()["remoteImages"], true);
+    assert!(s.execute("app.prefs", json!({"remoteImages": "false"})).is_err());
+    s.execute("app.prefs", json!({"remoteImages": false})).unwrap();
+    assert!(!s.prefs.remote_images);
     // 新写信窗口的默认格式
     assert_eq!(s.execute("app.prefs", json!({})).unwrap()["composeRich"], true);
     s.execute("app.prefs", json!({"composeRich": false})).unwrap();
@@ -782,6 +789,7 @@ fn prefs_contacts_and_folders() {
     let s2 = Session::open(dir.path().to_path_buf(), Arc::new(MemorySecrets::new()), Arc::new(fake)).unwrap();
     assert_eq!(s2.accounts().len(), 1);
     assert!(!s2.prefs.chinese_quotes);
+    assert!(!s2.prefs.remote_images);
     assert_eq!(s2.view().messages.len(), 3);
 }
 

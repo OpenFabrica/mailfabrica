@@ -280,6 +280,8 @@ pub const TABLE: &[(&str, &str)] = &[
     ("Don't Save", "不保存"),
     ("Downloading message…", "正在下载邮件…"),
     ("Rendering message…", "正在渲染邮件…"),
+    ("Automatically load remote images", "自动加载远程图片"),
+    ("HTML preview unavailable; showing plain text.", "HTML 预览不可用，已显示纯文本。"),
     ("Drafts", "草稿箱"),
     ("Earlier", "更早"),
     ("Email", "邮箱"),

@@ -136,8 +136,11 @@ pub(crate) fn build() -> Result<(), String> {
         ],
     )?;
     tool("/usr/bin/hdiutil", &["verify".as_ref(), dmg.as_os_str()])?;
-    if let Some(config) = notarization {
+    if let Some(config) = signing.as_ref() {
         config.sign(&dmg, false)?;
+        tool("/usr/bin/codesign", &["--verify".as_ref(), "--strict".as_ref(), dmg.as_os_str()])?;
+    }
+    if let Some(config) = notarization {
         submissions.push(config.submit(&dmg, &audit)?);
         config.staple(&dmg, false)?;
     }
