@@ -26,6 +26,8 @@ mailfabrica-brand = { workspace = true }
 winresource = "0.1.31"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSCursor", "NSView", "NSWindow"] }
 wry = { version = "=0.55.1", default-features = false, features = ["protocol"] }
 mailfabrica-html = { workspace = true }
 percent-encoding = "2"

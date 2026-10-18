@@ -45,6 +45,9 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 
 `ui.inspect.reader.browser` 返回 `backend`（`wkwebview` / `blitz`）、加载 `status`、`error`、
 `remoteImages`、`generation`、原生层 `visible`、`rect` 和可见内容的尺寸/图片计数 `metrics`。
+macOS 还提供 `nativeCursor`（本应用当前 `hand` / `text` / `arrow` / `other` 光标）与 `nativePointerOver`（真实系统指针是否位于可见正文中）。
+`hover` 提供当前真实指针的正文 CSS 坐标和近期命中结果；换信、隐藏、失焦或结果过期后清空。
+悬停验收需让真实指针进入目标区域；自动化点击或截图上的操作指示箭头不能证明实际悬停光标。
 正文状态为 `ready` 后可调用以下命令，均经 `engine.execute`、直接方法名或 MCP 控制模式调用：
 
 | 命令 | 参数 | 行为 |
@@ -54,6 +57,7 @@ mailfabrica --control 7981            # 或环境变量 MAILFABRICA_CONTROL_PORT
 | `ui.readerScroll` | `{top: number}` | 滚动到 CSS 像素位置，范围 0–200000 |
 | `ui.readerSelect` | `{start: number, end: number}` | 按正文 Unicode 字符偏移选择文本，跳过样式和脚本文本；最大 1000000 |
 | `ui.readerCopy` | `{}` | 复制原生正文当前选区到剪贴板 |
+| `ui.readerHitTest` | `{x: number, y: number}` | 只读查询 CSS 视口坐标处的光标类型，结果在 `hitTest`，换信时清空；不移动或设置系统指针，不代替真实悬停验收 |
 
 操作异步排队，旧邮件的任务在换信时丢弃。选择、复制与滚动由宿主固定脚本完成，不能传入任意网页脚本。
 `ui.readerMode {mode: "html" / "plain"}` 仍可切换显示方式。

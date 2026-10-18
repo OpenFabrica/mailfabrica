@@ -241,6 +241,7 @@ pub fn handle(app: &mut MailApp, ctx: &egui::Context, method: &str, p: &Json) ->
                 "ui.readerMode",
                 "ui.readerReload",
                 "ui.readerCopy",
+                "ui.readerHitTest",
                 "ui.readerScroll",
                 "ui.readerSelect",
                 "ui.calendar",

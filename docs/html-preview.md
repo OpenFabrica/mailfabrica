@@ -37,6 +37,9 @@ flowchart LR
 - HTML 原文超过 2 MiB、初始化失败、10 秒内未出现可见正文或加载完成后没有可见文字/图片时，显示纯文本并提供重试。
   代号及每实例事件队列隔离异步结果，旧邮件的回调不能更新新邮件。
 - 正文在 DOM 提交后即可显示，不等待慢速远程图片下载完成。
+- macOS 的 winit 父视图会注册整窗箭头区域；真实指针进入正文时只移除父视图自己的 cursor rect，保持整个窗口及 WebKit 的光标机制开启。
+  宿主每 50 毫秒按真实指针的 CSS 视口坐标运行固定命中脚本并校正链接手形、文字或空白处的光标；不等待图片下载完成，也不开放邮件 JavaScript。
+  控件可见性只在发生变化时设置，避免反复干扰原生跟踪区域。换信、指针离开、窗口失焦、正文隐藏或宿主销毁时清理悬停结果并恢复父视图；异步结果须匹配当前实例、查询序号及坐标，最长有效期 250 毫秒。
 - `ui.inspect.reader.browser` 提供 `backend/status/error/remoteImages/generation/visible/rect`。
   原生 WebView 不在 egui 的 GPU 纹理里，`ui.screenshot` 不包含正文覆盖层；视觉验收应捕获真实 macOS 窗口。
 

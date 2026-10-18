@@ -23,12 +23,21 @@ pub enum BrowserAction {
     Scroll(f64),
     Select { start: u64, end: u64 },
     Copy,
+    HitTest([f64; 2]),
 }
 
 /// 宿主和界面共享的浏览器状态；默认禁用，未接原生窗口的测试和其他平台继续使用原渲染器。
 #[derive(Default)]
 pub struct BrowserBody {
     pub enabled: bool,
+    /// 宿主应用当前原生光标，用于验证 WebView 与外层窗口的光标归属。
+    pub native_cursor: &'static str,
+    /// 系统真实指针是否位于当前可见的原生正文中。
+    pub native_pointer_over: bool,
+    /// 当前真实指针位置和近期 DOM 命中结果；没有有效悬停时为 null。
+    pub hover: Value,
+    /// 控制通道的最近一次只读命中查询，与持续更新的加载统计独立保存。
+    pub hit_test: Value,
     pub request: Option<BrowserRequest>,
     pub status: &'static str,
     pub error: Option<String>,
@@ -68,13 +77,14 @@ impl BrowserBody {
         self.error = None;
         self.status = "loading";
         self.metrics = Value::Null;
+        self.hit_test = Value::Null;
         self.actions.clear();
     }
 
     /// 控制通道读取可见状态，不返回正文或附件数据。
     pub fn inspect(&self) -> Value {
         json!({"enabled": self.enabled, "backend": if self.enabled { "wkwebview" } else { "blitz" },
-            "status": self.status, "error": self.error, "remoteImages": self.remote_images, "generation": self.generation, "metrics": self.metrics,
+            "nativeCursor": self.native_cursor, "nativePointerOver": self.native_pointer_over, "hover":self.hover, "hitTest":self.hit_test, "status": self.status, "error": self.error, "remoteImages": self.remote_images, "generation": self.generation, "metrics": self.metrics,
             "visible": self.visible, "rect": self.request.as_ref().map(|r| [r.rect.left(), r.rect.top(), r.rect.width(), r.rect.height()])})
     }
 }
@@ -86,11 +96,15 @@ pub fn command(app: &mut MailApp, id: &str, params: &Value) -> Result<Value, Str
         return Err("no active browser message".into());
     }
     let browser = &mut app.reader.browser;
-    if matches!(id, "ui.readerCopy" | "ui.readerScroll" | "ui.readerSelect") {
+    if matches!(id, "ui.readerCopy" | "ui.readerScroll" | "ui.readerSelect" | "ui.readerHitTest") {
         if browser.status != "ready" {
             return Err("browser message is not ready".into());
         }
         let action = match id {
+            "ui.readerHitTest" => {
+                let coordinate = |name| params.get(name).and_then(Value::as_f64).filter(|n| n.is_finite() && (0.0..=200_000.0).contains(n));
+                BrowserAction::HitTest([coordinate("x").ok_or("invalid x")?, coordinate("y").ok_or("invalid y")?])
+            }
             "ui.readerScroll" => {
                 let top = params
                     .get("top")
@@ -156,6 +170,23 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, view: &Arc<MessageView
 mod tests {
     use super::*;
     use mailfabrica_engine::Session;
+
+    /// 命中查询是只读操作，只接受有限的非负视口坐标，不允许拼入网页脚本。
+    #[test]
+    fn hit_test_validates_coordinates_before_queueing() {
+        let mut app = MailApp::new(Session::demo().expect("demo"), Default::default());
+        let key = app.session.view().messages.first().expect("message").key.clone();
+        app.session.run("message.open", json!({"key":key.to_string()})).expect("open");
+        app.reader.browser.enabled = true;
+        app.reader.browser.key = Some(key);
+        app.reader.browser.status = "ready";
+        for params in [json!({}), json!({"x":-1,"y":0}), json!({"x":0,"y":200001}), json!({"x":"alert(1)","y":0})] {
+            assert!(command(&mut app, "ui.readerHitTest", &params).is_err());
+            assert!(app.reader.browser.actions.is_empty());
+        }
+        command(&mut app, "ui.readerHitTest", &json!({"x":24,"y":24})).expect("valid point");
+        assert!(matches!(app.reader.browser.actions.as_slice(), [BrowserAction::HitTest([24.0, 24.0])]));
+    }
 
     /// 全局图片策略跨邮件和正文刷新保留，切换策略使旧代和失败状态失效。
     #[test]

@@ -34,11 +34,14 @@ enum Event {
     Checked(String),
     Open(String),
     Copied(String),
+    Cursor(u64, [f64; 2], String),
+    HitTest([f64; 2], String),
 }
 
 /// 原生控件仅在主线程创建和移动；窗口句柄由 eframe 的安全接口提供。
 #[derive(Default)]
 pub(crate) struct Browser {
+    cursor: crate::cursor::CursorOwner,
     view: Option<WebView>,
     generation: Option<u64>,
     events: Option<mpsc::Receiver<Event>>,
@@ -49,11 +52,14 @@ pub(crate) struct Browser {
     committed: bool,
     checking: bool,
     last_check: Option<Instant>,
+    visible: bool,
 }
 
 impl Browser {
     /// 每帧与 egui 的正文视口对齐；菜单、弹窗、写信或纯文本模式下隐藏原生覆盖层。
     pub(crate) fn update(&mut self, app: &mut MailApp, frame: &eframe::Frame, ctx: &egui::Context) {
+        app.reader.browser.native_cursor = crate::cursor::current_name();
+        app.reader.browser.hover = serde_json::Value::Null;
         app.reader.browser.visible = false;
         let blocked = app.dialog.is_some()
             || app.message.is_some()
@@ -67,6 +73,8 @@ impl Browser {
         });
         let Some(request) = request else {
             // 纯文本、无正文或离开阅读时销毁控件，取消旧信的资源加载并丢弃回调。
+            self.cursor.update(None);
+            app.reader.browser.native_pointer_over = false;
             self.view = None;
             self.events = None;
             self.sender = None;
@@ -74,6 +82,7 @@ impl Browser {
             return;
         };
         if self.generation != Some(request.generation) {
+            self.cursor.reset();
             app.reader.browser.status = "loading";
             self.view = None;
             self.events = None;
@@ -122,6 +131,11 @@ impl Browser {
                         ctx.copy_text(text);
                     }
                 }
+                Event::Cursor(sequence, point, result) => self.cursor.complete(sequence, point, &result),
+                Event::HitTest(point, result) => {
+                    app.reader.browser.hit_test = serde_json::json!({"point":point,
+                        "cursor":serde_json::from_str::<String>(&result).unwrap_or_default()});
+                }
             }
         }
         // 导航完成不保证图片已完成；文字先显示，资源未完成时继续有限观察，避免留下过期的加载统计。
@@ -164,6 +178,16 @@ impl Browser {
                             }
                         })
                     }
+                    BrowserAction::HitTest(point) => {
+                        let tx = self.sender.clone();
+                        let ctx = ctx.clone();
+                        view.evaluate_script_with_callback(&crate::cursor::hit_test(point), move |result| {
+                            if let Some(tx) = &tx {
+                                let _ = tx.send(Event::HitTest(point, result));
+                                ctx.request_repaint();
+                            }
+                        })
+                    }
                 };
                 if let Err(error) = result {
                     log::warn!("browser action failed: {error}");
@@ -183,11 +207,44 @@ impl Browser {
                     let _ = view.evaluate_script_with_callback(VISIBLE_CONTENT, callback);
                 }
             }
-            if let Err(error) = view.set_visible(!blocked) {
-                self.fail(app, error.to_string());
-            } else {
-                app.reader.browser.visible = !blocked;
+            if self.visible == blocked {
+                if let Err(error) = view.set_visible(!blocked) {
+                    self.fail(app, error.to_string());
+                    return;
+                }
+                self.visible = !blocked;
             }
+            app.reader.browser.visible = self.visible;
+        }
+        let point = self.cursor.update(self.view.as_ref().filter(|_| app.reader.browser.visible));
+        app.reader.browser.native_pointer_over = point.is_some();
+        app.reader.browser.hover = serde_json::Value::Null;
+        if let Some(point) = point {
+            if self.committed
+                && let Some(sequence) = self.cursor.query()
+                && let Some(view) = &self.view
+            {
+                let tx = self.sender.clone();
+                let wake = ctx.clone();
+                if let Err(error) = view.evaluate_script_with_callback(&crate::cursor::hit_test(point), move |result| {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(Event::Cursor(sequence, point, result));
+                        wake.request_repaint();
+                    }
+                }) {
+                    log::warn!("cursor hit test failed: {error}");
+                }
+            }
+            if let Some(cursor) = self.cursor.apply(point) {
+                app.reader.browser.hover = serde_json::json!({"point":point,"cursor":cursor});
+            }
+        }
+        app.reader.browser.native_cursor = crate::cursor::current_name();
+        if app.reader.browser.native_pointer_over {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        } else if app.reader.browser.visible {
+            // 子视图可能独占鼠标事件；正文可见时仍检查进入和失焦，不能依赖外层 egui 收到移动事件。
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
         if observing && self.view.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -290,11 +347,13 @@ impl Browser {
             .build_as_child(frame)
             .map_err(|error| error.to_string())?;
         self.view = Some(view);
+        self.visible = visible;
         Ok(())
     }
 
     /// 失败即移除原生控件，下一帧由 egui 显示可读的纯文本与重试按钮。
     fn fail(&mut self, app: &mut MailApp, error: String) {
+        self.cursor.reset();
         self.view = None;
         self.events = None;
         self.ready = false;

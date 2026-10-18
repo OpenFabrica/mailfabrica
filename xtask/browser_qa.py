@@ -34,8 +34,10 @@ def wait(port, predicate, timeout=15):
         latest = rpc(port, "ui.inspect")
         if predicate(latest):
             return latest
+        if latest.get("visibility", {}).get("occluded"):
+            rpc(port, "ui.focusWindow")
         time.sleep(0.05)
-    raise AssertionError(f"Timed out: {latest['reader'] if latest else None}; visibility={latest.get('visibility') if latest else None}")
+    raise AssertionError(f"Timed out: {latest['reader'] if latest else None}; focused={latest.get('focused') if latest else None}; visibility={latest.get('visibility') if latest else None}")
 
 
 def seed(root, resource_port, original):
@@ -60,6 +62,7 @@ def seed(root, resource_port, original):
         '<div style="display:none">Hidden content</div>',
         '<p>' + 'x' * (2 << 20) + '</p>',
         '<img src="cid:logo" width="100" height="100">',
+        f'<a href="#privacy" style="display:block;width:240px;height:60px"><span>Privacy Policy</span></a>'
         f'<p>Slow images must not block readable text</p><img src="{url}/slow" width="24" height="24">',
         None,
     ]
@@ -90,6 +93,8 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("--original", type=Path)
     parser.add_argument("--result", type=Path, required=True)
+    parser.add_argument("--start-file", type=Path, help="等待原生窗口前置后创建此文件，适用于限制后台激活的 macOS 会话")
+    parser.add_argument("--bundle", type=Path, help="通过 Launch Services 启动一次性测试应用，避免直接执行 Mach-O 时窗口持续被系统判为遮挡")
     args = parser.parse_args()
     requests = []
 
@@ -103,7 +108,11 @@ def main():
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
             self.end_headers()
-            self.wfile.write(PNG)
+            try:
+                self.wfile.write(PNG)
+            except (BrokenPipeError, ConnectionResetError):
+                # 快速换信会正常取消旧 WebView 的慢图请求。
+                pass
 
         def log_message(self, *_):
             """避免把 HTTP 日志混入测试结果。"""
@@ -118,7 +127,11 @@ def main():
         root = Path(temporary)
         seed(root, server.server_port, args.original)
         with (root / "runtime.log").open("wb") as log:
-            process = subprocess.Popen([str(args.binary.resolve()), "--data", str(root), "--control", str(port)], stdout=log, stderr=log)
+            command = [str(args.binary.resolve())]
+            if args.bundle:
+                assert (args.bundle / "Contents/MacOS" / args.binary.name).resolve() == args.binary.resolve(), "Binary does not belong to bundle"
+                command = ["/usr/bin/open", "-W", "-n", "-a", str(args.bundle.resolve()), "--args"]
+            process = subprocess.Popen(command + ["--data", str(root), "--control", str(port)], stdout=log, stderr=log)
             try:
                 for _ in range(100):
                     try:
@@ -139,6 +152,11 @@ def main():
 
                 assert rpc(port, "app.prefs")["remoteImages"] is True
                 select(1)
+                if args.start_file:
+                    deadline = time.monotonic() + 60
+                    while not args.start_file.exists():
+                        assert time.monotonic() < deadline, "Waiting for native window activation timed out"
+                        time.sleep(0.1)
                 enabled = wait(port, lambda v: (v["reader"]["browser"]["metrics"] or {}).get("loadedImages") == 2)["reader"]["browser"]
                 assert enabled["remoteImages"], enabled
                 assert {r["path"] for r in requests} == {"/image", "/background"}, requests
@@ -206,12 +224,31 @@ def main():
                 rpc(port, "app.prefs", {"remoteImages": True})
                 wait(port, lambda v: v["reader"]["browser"]["remoteImages"] and v["reader"]["browser"]["status"] == "ready", timeout=2)
                 results["slowImagesDoNotBlockText"] = {"readySeconds": time.monotonic() - started}
+                def hit_test(x, y, expected):
+                    """使用生产悬停路径的只读命中脚本；不会移动系统指针或把样式当成原生光标证明。"""
+                    rpc(port, "ui.readerHitTest", {"x": x, "y": y})
+                    return wait(port, lambda v: v["reader"]["browser"].get("hitTest") == {"point": [x, y], "cursor": expected})
+
+                pending_link = hit_test(24, 24, "pointer")["reader"]["browser"]
+                assert pending_link["metrics"]["pending"] and pending_link["metrics"]["loadedImages"] == 0, pending_link
+                results["linkWhileImagePending"] = pending_link
                 wait(port, lambda v: (v["reader"]["browser"]["metrics"] or {}).get("loadedImages") == 1)
+                hit_test(24, 24, "pointer")
+                for _ in range(12):
+                    select(4)
+                    hit_test(24, 24, "default")
+                    select(5)
+                    link = hit_test(24, 24, "pointer")["reader"]["browser"]
+                    assert link["metrics"]["pending"] and link["metrics"]["loadedImages"] == 0, link
+                results["linkHitTestSurvives24MessageSwitches"] = True
                 if args.original:
                     rpc(port, "app.prefs", {"remoteImages": False})
                     original = select(7)["reader"]["browser"]
                     assert original["metrics"]["height"] > 500, original
                     results["originalMessage"] = original
+            except Exception:
+                args.result.with_suffix(".runtime.log").write_text((root / "runtime.log").read_text())
+                raise
             finally:
                 try:
                     rpc(port, "app.quit")

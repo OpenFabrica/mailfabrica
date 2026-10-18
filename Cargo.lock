@@ -2710,6 +2710,8 @@ dependencies = [
  "mailfabrica-html",
  "mailfabrica-ui-egui",
  "mailfabrica-update",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "percent-encoding",
  "rfd",
  "serde_json",

@@ -15,6 +15,8 @@
 #[cfg(target_os = "macos")]
 mod browser;
 mod control_server;
+#[cfg(target_os = "macos")]
+mod cursor;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

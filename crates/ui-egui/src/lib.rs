@@ -246,7 +246,7 @@ impl MailApp {
             "ui.calendar" => calendar::command(self, p),
             "ui.quickReply" => self.quick_reply(p),
             "ui.readerMode" => self.reader_mode(p),
-            "ui.readerReload" | "ui.readerCopy" | "ui.readerScroll" | "ui.readerSelect" => browser::command(self, id, p),
+            "ui.readerReload" | "ui.readerCopy" | "ui.readerScroll" | "ui.readerSelect" | "ui.readerHitTest" => browser::command(self, id, p),
             "ui.saveAttachment" => self.save_attachment(p),
             "ui.attachFiles" => self.attach_files(p),
             "ui.exportInvoices" => self.export_invoices(p),
