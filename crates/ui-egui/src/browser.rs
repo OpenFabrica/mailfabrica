@@ -134,6 +134,14 @@ pub fn command(app: &mut MailApp, id: &str, params: &Value) -> Result<Value, Str
     Ok(browser.inspect())
 }
 
+/// 原生覆盖层需要让出菜单和弹窗；宿主显隐与正文背景使用同一判断，避免留下空白。
+pub fn covered(app: &MailApp, ctx: &egui::Context) -> bool {
+    app.dialog.is_some()
+        || app.message.is_some()
+        || egui::Popup::is_any_open(ctx)
+        || app.session.composes().iter().any(|c| !app.composer.is_hidden(c.id))
+}
+
 /// 显示加载状态并为浏览器预留视口；失败时明确提示并让调用方显示邮件的纯文本。
 pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, view: &Arc<MessageView>) -> bool {
     app.reader.browser.select(key, view);
@@ -155,6 +163,20 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, view: &Arc<MessageView
     }
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(1.0), ui.available_height().max(1.0)), Sense::hover());
     let rect = rect.intersect(ui.clip_rect());
+    if covered(app, ui.ctx()) {
+        // WebView 位于 egui 上方，菜单打开时宿主必须暂时隐藏它；用现有渲染器补上正文，避免整块留白。
+        // 原生实例与滚动位置保持不变，关闭菜单后直接恢复，不重新下载邮件。
+        let scroll = app.reader.browser.metrics.get("scrollTop").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let mut background = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        background.set_clip_rect(rect);
+        background.visuals_mut().disabled_alpha = 1.0;
+        background.disable();
+        egui::ScrollArea::vertical()
+            .id_salt(("browser_menu_background", key.to_string()))
+            .vertical_scroll_offset(scroll)
+            .auto_shrink([false, false])
+            .show(&mut background, |ui| crate::reader::message_body(app, ui, key, view, &crate::theme::Tokens::get(ui.ctx())));
+    }
     app.target("reader.html", rect);
     app.reader.browser.request = Some(BrowserRequest {
         generation: app.reader.browser.generation,
@@ -170,6 +192,50 @@ pub fn show(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, view: &Arc<MessageView
 mod tests {
     use super::*;
     use mailfabrica_engine::Session;
+
+    /// 菜单遮住原生层时仍画出 HTML 正文，关菜单不会重载原生实例或改变正文视口。
+    #[test]
+    fn menu_keeps_a_rendered_body_behind_the_overlay() {
+        let ctx = egui::Context::default();
+        let mut app = MailApp::new(Session::demo().expect("demo"), Default::default());
+        let key = app.session.view().messages.last().expect("newsletter").key.clone();
+        app.session.run("view.select", json!({"key":key.to_string()})).expect("select");
+        app.session.wait_idle(std::time::Duration::from_secs(10));
+        let mailfabrica_engine::BodyState::Ready(view) = app.session.body(&key) else { panic!("body not ready") };
+        assert!(view.html.is_some());
+        app.reader.browser.enabled = true;
+        app.reader.browser.select(&key, &view);
+        app.reader.browser.status = "ready";
+        let input = || egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 480.0))), ..Default::default() };
+        let mut output = ctx.run_ui(input(), |ui| assert!(show(&mut app, ui, &key, &view)));
+        output.textures_delta.clear();
+        let request = app.reader.browser.request.clone().expect("native viewport");
+        assert!(app.reader.html.is_none());
+        egui::Popup::open_id(&ctx, egui::Id::new("test_menu"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            egui::Popup::open_id(&ctx, egui::Id::new("test_menu"));
+            let mut output = ctx.run_ui(input(), |ui| assert!(show(&mut app, ui, &key, &view)));
+            output.textures_delta.clear();
+            let painted = output.shapes.iter().any(|s| {
+                matches!(&s.shape, egui::epaint::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() && !mesh.indices.is_empty())
+                    || matches!(&s.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("Fabrica Weekly #41"))
+            });
+            if painted {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "menu left the body blank");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        egui::Popup::close_all(&ctx);
+        let mut output = ctx.run_ui(input(), |ui| assert!(show(&mut app, ui, &key, &view)));
+        output.textures_delta.clear();
+        assert!(!covered(&app, &ctx));
+        let after = app.reader.browser.request.as_ref().expect("native viewport");
+        assert_eq!(after.generation, request.generation);
+        assert_eq!(after.rect, request.rect);
+        assert_eq!(after.key, key);
+    }
 
     /// 命中查询是只读操作，只接受有限的非负视口坐标，不允许拼入网页脚本。
     #[test]

@@ -19,7 +19,7 @@ pub fn prepare_document(html: &str, remote_images: bool) -> Result<String, Strin
     cleaner
         .rm_clean_content_tags(&["style"])
         .add_tags(&["style", "center", "font", "picture", "source"])
-        .add_clean_content_tags(&["script", "iframe", "object", "embed", "template", "svg", "math"])
+        .add_clean_content_tags(&["title", "script", "iframe", "object", "embed", "template", "svg", "math"])
         .add_generic_attributes(&["class", "id", "style", "align", "valign", "width", "height", "bgcolor", "dir"])
         .add_tag_attributes("table", &["border", "cellpadding", "cellspacing", "background"])
         .add_tag_attributes("td", &["background"])
@@ -96,6 +96,20 @@ fn body_attributes(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 文档标题不应落入正文；正文自身的同名标题和样式仍须保留。
+    #[test]
+    fn excludes_document_title_without_removing_body_heading() {
+        let doc = prepare_document(
+            "<html><head><title>【测试】告警通知通道测试</title><style>h2{color:blue}</style></head><body><h2>【测试】告警通知通道测试</h2><p>邮件正文</p></body></html>",
+            false,
+        )
+        .expect("document");
+        assert_eq!(doc.matches("【测试】告警通知通道测试").count(), 1);
+        assert!(doc.contains("<h2>【测试】告警通知通道测试</h2>"));
+        assert!(doc.contains("h2{color:blue}"));
+        assert!(doc.contains("<p>邮件正文</p>"));
+    }
 
     /// 保留表格、样式和媒体查询，禁止主动内容、文件链接与远程默认加载。
     #[test]

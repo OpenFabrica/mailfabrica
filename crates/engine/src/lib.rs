@@ -584,6 +584,15 @@ impl Session {
         self.view.rows.iter().find(|r| r.members.contains(&mi)).and_then(|r| r.group.as_deref())
     }
 
+    /// 当前单封邮件在主题组内的相邻邮件；首尾、无聚焦或不属于组时返回 `None`，不跨组。
+    pub fn group_neighbor(&self, forward: bool) -> Option<MsgKey> {
+        let key = self.view.focused.as_ref()?;
+        let messages = self.group_messages(self.group_of(key)?);
+        let index = messages.iter().position(|m| &m.key == key)?;
+        let next = if forward { index.checked_add(1)? } else { index.checked_sub(1)? };
+        messages.get(next).map(|m| m.key.clone())
+    }
+
     /// 当前列表里的全部主题组（至少两封的行）的摘要，按列表顺序。
     pub fn groups(&self) -> Vec<GroupInfo> {
         self.view.rows.iter().filter_map(|r| r.group.as_deref()).map(|g| self.group_info(g)).collect()

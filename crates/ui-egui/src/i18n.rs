@@ -106,6 +106,8 @@ pub const COMMANDS: &[(&str, &str, &str)] = &[
     ("view.search", "Search", "搜索"),
     ("view.next", "Next Message", "下一封"),
     ("view.prev", "Previous Message", "上一封"),
+    ("view.groupNext", "Next Message in Group", "组内下一封"),
+    ("view.groupPrev", "Previous Message in Group", "组内上一封"),
     ("view.selectGroup", "Show Subject Group", "查看同主题邮件"),
     ("message.open", "Open", "打开"),
     ("message.markRead", "Mark as Read", "标为已读"),

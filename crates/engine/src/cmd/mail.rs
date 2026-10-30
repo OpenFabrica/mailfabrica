@@ -19,6 +19,8 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         cmd!(query "view.groups", "List Subject Groups", [], None, "{}", always, groups),
         cmd!("view.next", "Next Message", ["View"], None, "{}", has_messages, next),
         cmd!("view.prev", "Previous Message", ["View"], None, "{}", has_messages, prev),
+        cmd!("view.groupNext", "Next Message in Group", ["View"], None, "{}", has_group_next, group_next),
+        cmd!("view.groupPrev", "Previous Message in Group", ["View"], None, "{}", has_group_prev, group_prev),
         cmd!(query "folder.list", "List Folders", [], None, "{account?}", always, list_folders),
         cmd!("folder.markAllRead", "Mark All as Read", ["Mail"], None, "{account?, folder?}", has_account, mark_all_read),
         cmd!("folder.create", "New Folder…", ["Mail"], None, "{account, name}", has_account, create_folder),
@@ -162,6 +164,33 @@ fn next(s: &mut Session, _: &Json) -> Result<Json> {
 /// `view.prev`：上一封。
 fn prev(s: &mut Session, _: &Json) -> Result<Json> {
     step(s, -1)
+}
+
+/// 组内存在下一封时才允许切换。
+fn has_group_next(s: &Session) -> std::result::Result<(), String> {
+    s.group_neighbor(true).map(|_| ()).ok_or_else(|| "no next message in the subject group".into())
+}
+
+/// 组内存在上一封时才允许切换。
+fn has_group_prev(s: &Session) -> std::result::Result<(), String> {
+    s.group_neighbor(false).map(|_| ()).ok_or_else(|| "no previous message in the subject group".into())
+}
+
+/// 切换到当前主题组内的相邻单封邮件，沿用打开正文和自动标已读流程。
+fn group_step(s: &mut Session, forward: bool) -> Result<Json> {
+    let key = s.group_neighbor(forward).ok_or_else(|| EngineError::Other("no adjacent message in the subject group".into()))?;
+    s.select_keys(vec![key.clone()], false, true);
+    Ok(json!({"key": key.to_string()}))
+}
+
+/// `view.groupNext`：组内下一封（较旧）。
+fn group_next(s: &mut Session, _: &Json) -> Result<Json> {
+    group_step(s, true)
+}
+
+/// `view.groupPrev`：组内上一封（较新）。
+fn group_prev(s: &mut Session, _: &Json) -> Result<Json> {
+    group_step(s, false)
 }
 
 /// `folder.list`：一个或全部账户的文件夹。

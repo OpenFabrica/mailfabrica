@@ -1027,6 +1027,43 @@ fn grouped_setup() -> (Session, FakeConnector, tempfile::TempDir) {
     (s, fake, dir)
 }
 
+/// 组内切换遵循最新在前的顺序，只选中单封并加载正文；首尾、组列表和普通邮件不可越界。
+#[test]
+fn group_navigation_stays_within_the_open_messages_group() {
+    let (mut s, _fake, _dir) = grouped_setup();
+    s.execute("view.selectGroup", json!({"group": "weekly report"})).unwrap();
+    let keys = s.group_info("weekly report").keys;
+    assert!(s.execute("view.groupNext", json!({})).is_err());
+    assert!(s.execute("view.groupPrev", json!({})).is_err());
+    s.execute("view.select", json!({"key": keys[0].to_string()})).unwrap();
+    assert!(s.execute("view.groupPrev", json!({})).is_err());
+    for key in keys.iter().skip(1) {
+        let result = s.execute("view.groupNext", json!({})).unwrap();
+        assert_eq!(result["key"], key.to_string());
+        assert_eq!(s.view().focused.as_ref(), Some(key));
+        assert_eq!(s.view().selected, vec![key.clone()]);
+        assert_eq!(s.view().group, None);
+        s.wait_idle(WAIT);
+        assert!(matches!(s.body(key), BodyState::Ready(_)));
+        assert!(s.message(key).unwrap().flags.seen);
+    }
+    assert!(s.execute("view.groupNext", json!({})).is_err());
+    for key in keys.iter().rev().skip(1) {
+        assert_eq!(s.execute("view.groupPrev", json!({})).unwrap()["key"], key.to_string());
+    }
+    assert!(s.execute("view.groupPrev", json!({})).is_err());
+    let ordinary = key_of(&s, "Lunch?");
+    s.execute("view.select", json!({"key": ordinary.to_string()})).unwrap();
+    assert!(s.execute("view.groupNext", json!({})).is_err());
+    assert!(s.execute("view.groupPrev", json!({})).is_err());
+    s.execute("view.select", json!({"key": keys[1].to_string()})).unwrap();
+    s.execute("message.delete", json!({})).unwrap();
+    s.execute("view.select", json!({"key": keys[0].to_string()})).unwrap();
+    assert_eq!(s.execute("view.groupNext", json!({})).unwrap()["key"], keys[2].to_string());
+    s.execute("app.prefs", json!({"groupBySubject": false})).unwrap();
+    assert!(s.execute("view.groupPrev", json!({})).is_err());
+}
+
 /// 列表行的简写：每行的主题（组用 `组键×封数`）。
 fn row_names(s: &Session) -> Vec<String> {
     let v = s.view();

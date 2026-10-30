@@ -19,3 +19,21 @@ flowchart LR
 ```
 
 验证入口：`cargo run -p mailfabrica -- --demo --control 7981`。用控制通道 `ui.screenshot` 查看实际渲染，`ui.click` / `ui.key` 验证选择，`ui.inspect` 核对选中邮件与可见行。协议见 [control-protocol.md](control-protocol.md)。
+
+## 聚合组内阅读
+
+主题组列表按最新在前排列。打开一封后，阅读窗格顶部保留返回组列表的入口，并提供上一封、下一封按钮；
+切换范围限定为该组当前仍在列表中的成员，首尾禁用，不循环或跨到其他组。
+
+`Session::group_neighbor` 提供目标，`view.groupPrev` / `view.groupNext` 命令负责切换并沿用单封选择、正文下载和自动已读流程。
+界面只发送命令；CLI/MCP 使用相同命令及启用状态。删除成员、重新收信或关闭归类后，目标随当前列表重新计算。
+
+```mermaid
+flowchart LR
+    A[主题组列表] -->|打开单封| B[单封详情]
+    B -->|组内上一封或下一封| C[引擎检查相邻成员]
+    C -->|存在| D[选中并加载相邻邮件]
+    C -->|不存在| E[禁用对应按钮]
+    D --> B
+    B -->|返回主题组| A
+```

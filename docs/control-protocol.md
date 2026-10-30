@@ -76,6 +76,7 @@ macOS 还提供 `nativeCursor`（本应用当前 `hand` / `text` / `arrow` / `ot
 | `view.selectGroup {group}` / `{subject}` / `{key}` | 打开主题组：`group` 是归类键，`subject` 是任意写法的主题（会归一化），`key` 是组里某封邮件。选中组里全部邮件、不聚焦单封，阅读窗格显示这一组的列表。返回 `{group, subject, count, unread, flagged, keys}` |
 | `view.groups`（查询） | `{enabled, rows, open, groups: [{group, subject, count, unread, flagged, keys}]}` |
 | `view.next` / `view.prev` | 按行走：主题组算一行，走到组上就打开整组；返回 `{key, group?}` |
+| `view.groupNext` / `view.groupPrev` | 从组内单封详情切到下一封 / 上一封，按组列表顺序（最新在前）；返回 `{key}`。首尾、组列表或普通单封时对应命令禁用，不跨组 |
 | `ui.inspect` → `grouping`、`rows`、`group`、`groups` | 开关、列表行数、打开的组（归类键）、全部主题组 |
 | `ui.inspect` → `reader.view`、`reader.groupBack` | 阅读窗格显示 `group`（组列表）还是 `message`；打开的邮件属于哪个组（顶上有返回横条） |
 
@@ -83,7 +84,7 @@ macOS 还提供 `nativeCursor`（本应用当前 `hand` / `text` / `arrow` / `ot
 回复、全部回复、转发不可用（要先在组列表里点开一封）。
 
 可点击目标：列表行 `list.row.<最新一封的键>`、视图菜单 `list.viewMenu`（菜单里的 `list.viewMenu.groupBySubject`）、
-组列表里的每封 `reader.group.<键>`、返回横条 `reader.group.back`。
+组列表里的每封 `reader.group.<键>`、返回横条 `reader.group.back`、组内切换 `reader.group.prev` / `reader.group.next`。
 
 ## 日历
 

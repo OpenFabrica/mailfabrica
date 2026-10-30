@@ -19,6 +19,7 @@
 //!   打开主题组：选中组里全部邮件、不聚焦单封；返回组摘要 `{group, subject, count, unread, flagged, keys}`。
 //! - `view.groups` (query) — `{enabled, rows, open, groups: [组摘要]}`：是否按主题归类、行数、打开的组、全部主题组。
 //! - `view.next` / `view.prev` — 选中列表里的下一行/上一行（主题组算一行，选中就打开整组）。快捷键 ↓/↑（UI 负责）。
+//! - `view.groupNext` / `view.groupPrev` — 当前单封详情在主题组内切换到下一封/上一封（最新在前）；首尾禁用，不跨组。
 //! - `message.list` (query) — `{account?, folder?, limit?, offset?, unreadOnly?, group?}`，不给范围就用当前视图；只给账户时为它的收件箱。
 //!   返回 `{total, messages}`。`group: true` 时按主题归类，返回 `{total（行数）, messageTotal, rows}`，
 //!   每行 `{group, count, unread, flagged, senders, keys, message（最新一封）}`，分页按行算。

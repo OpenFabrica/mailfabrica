@@ -417,22 +417,37 @@ fn group_list(app: &mut MailApp, ui: &mut Ui, group: &str) {
     });
 }
 
-/// 打开的邮件属于某个主题组时，阅读窗格顶上的横条："‹ 主题包括“…”的所有邮件 · N"，点一下回到组视图。
+/// 组内单封详情顶部：返回组列表，以及只在该组内切换的上一封、下一封。
 fn group_back(app: &mut MailApp, ui: &mut Ui, group: &str, t: &Tokens) {
     let lang = app.lang();
     let info = app.session.group_info(group);
     let text = format!("{} · {}", group_title(lang, &info.subject), info.count);
+    let previous = app.session.group_neighbor(false).is_some();
+    let next = app.session.group_neighbor(true).is_some();
     egui::Panel::top("group_back").exact_size(34.0).frame(egui::Frame::NONE.fill(t.reader)).show(ui, |ui| {
-        let r = ui.max_rect();
+        let full = ui.max_rect();
+        let mut nav =
+            ui.new_child(egui::UiBuilder::new().max_rect(full.shrink2(vec2(12.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        for (id, label, enabled, target) in [
+            ("view.groupNext", lang.cmd("view.next", "Next Message"), next, "reader.group.next"),
+            ("view.groupPrev", lang.cmd("view.prev", "Previous Message"), previous, "reader.group.prev"),
+        ] {
+            let response = nav.add_enabled(enabled, egui::Button::new(label));
+            app.target(target, response.rect);
+            if response.clicked() {
+                app.defer(id, json!({}));
+            }
+        }
+        let r = Rect::from_min_max(full.min, pos2(nav.min_rect().left() - 10.0, full.bottom()));
         let resp = ui.interact(r, egui::Id::new("group_back"), Sense::click());
         app.target("reader.group.back", r);
         let p = ui.painter();
         if resp.hovered() {
             p.rect_filled(r, 0.0, t.group);
         }
-        p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.separator));
+        p.line_segment([full.left_bottom(), full.right_bottom()], Stroke::new(1.0, t.separator));
         icons::paint(p, Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(14.0, 14.0)), Icon::ChevronLeft, t.accent);
-        let g = widgets::elided(p, &text, theme::ui_font(13.0), t.accent, r.width() - 36.0 - 20.0);
+        let g = widgets::elided(p, &text, theme::ui_font(13.0), t.accent, (r.width() - 36.0 - 20.0).max(0.0));
         p.galley(pos2(r.left() + 34.0, r.center().y - g.size().y / 2.0), g, t.accent);
         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             app.defer("view.selectGroup", json!({"group": group}));
@@ -579,7 +594,7 @@ fn attachments(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &MessageView, t:
 }
 
 /// 正文：有 HTML 且没切到纯文本时按格式显示，否则（或 HTML 里没有文字时）显示纯文本。
-fn message_body(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, t: &Tokens) {
+pub(crate) fn message_body(app: &mut MailApp, ui: &mut Ui, key: &MsgKey, v: &Arc<MessageView>, t: &Tokens) {
     if app.reader.wants_html(key)
         && let Some(html) = v.html.as_deref()
         && (crate::htmlbody::show(app, ui, key, v, html) || html_body(app, ui, key, v, html, t))

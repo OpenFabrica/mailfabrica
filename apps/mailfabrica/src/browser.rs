@@ -61,10 +61,7 @@ impl Browser {
         app.reader.browser.native_cursor = crate::cursor::current_name();
         app.reader.browser.hover = serde_json::Value::Null;
         app.reader.browser.visible = false;
-        let blocked = app.dialog.is_some()
-            || app.message.is_some()
-            || egui::Popup::is_any_open(ctx)
-            || app.session.composes().iter().any(|c| !app.composer.is_hidden(c.id));
+        let blocked = mailfabrica_ui_egui::browser::covered(app, ctx);
         let request = app.reader.browser.request.clone().filter(|r| {
             app.focused().as_ref() == Some(&r.key)
                 && app.reader.wants_html(&r.key)
