@@ -8,7 +8,7 @@ import (
 )
 
 // Version 由正式构建通过 ldflags 注入，不依赖 Cargo。
-var Version = "0.1.6-dev"
+var Version = "0.1.6"
 
 // UpdateState 为所有交付入口提供同一更新状态。
 type UpdateState struct {
