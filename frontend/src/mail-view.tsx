@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Download,
   Flag,
+  History,
   Inbox,
   LoaderCircle,
   Mail,
@@ -521,8 +522,8 @@ export function Reader({
           <div className="avatar">
             {(meta.from.name || meta.from.email).slice(0, 1).toUpperCase()}
           </div>
-          <div>
-            <div>
+          <div className="message-contact">
+            <div className="sender-heading">
               <button
                 className="contact-link sender-link"
                 title={t("查看往来邮件")}
@@ -533,6 +534,15 @@ export function Reader({
               <span className="muted address-email">
                 &lt;{meta.from.email}&gt;
               </span>
+              <button
+                type="button"
+                className="reader-history"
+                data-testid="reader.timeline"
+                onClick={() => onContact(meta.from)}
+              >
+                <History size={13} aria-hidden="true" />
+                {t("往来时间线")}
+              </button>
             </div>
             <p>
               {en ? "To" : t("发给")}{" "}
