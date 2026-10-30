@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestReplaceRollback 验证同卷替换与缺失载荷时的旧包恢复，只使用临时目录。
@@ -49,6 +50,40 @@ func TestReplaceRollback(t *testing.T) {
 			t.Fatalf("got %q want %q", b, want)
 		}
 	}
+}
+
+// TestHelperKeepsBundle 验证辅助进程能从自己的应用包读取 Info.plist，不再单独复制可执行文件。
+func TestHelperKeepsBundle(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "MailFabrica.app")
+	executable := filepath.Join(bundle, "Contents", "MacOS", "mailfabrica")
+	if e := os.MkdirAll(filepath.Dir(executable), 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(bundle, "Contents", "Info.plist"), []byte("bundle metadata"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	script := "#!/bin/sh\nset -eu\ntest \"$1\" = --apply-update\ntest -f \"$(dirname \"$0\")/../Info.plist\"\nprintf ready > \"$2\"\n"
+	if e := os.WriteFile(executable, []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	stage := filepath.Join(root, "stage")
+	if e := os.Mkdir(stage, 0700); e != nil {
+		t.Fatal(e)
+	}
+	marker := filepath.Join(stage, "started")
+	h := Handoff{Stage: stage, File: marker}
+	if e := h.Start(executable); e != nil {
+		t.Fatal(e)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, e := os.ReadFile(marker); e == nil && string(b) == "ready" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("helper did not start with bundle metadata")
 }
 
 // TestHelperRequiresNormalExitCommit 保证没有交接标记时绝不改动现有应用。

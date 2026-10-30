@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/openfabrica/mailfabrica/internal/store"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,13 +18,14 @@ import (
 
 // Handoff 保存只由宿主配置的安装交接，不允许控制命令指定替换目标。
 type Handoff struct {
-	Target  string `json:"target"`
-	Stage   string `json:"stage"`
-	Payload string `json:"payload"`
-	Backup  string `json:"backup"`
-	Parent  int    `json:"parent"`
-	Nonce   string `json:"nonce"`
-	File    string `json:"-"`
+	Target  string   `json:"target"`
+	Stage   string   `json:"stage"`
+	Payload string   `json:"payload"`
+	Backup  string   `json:"backup"`
+	Parent  int      `json:"parent"`
+	Nonce   string   `json:"nonce"`
+	File    string   `json:"-"`
+	Args    []string `json:"args,omitempty"`
 }
 
 // ApplicationTarget 从正在运行的可执行文件定位现有应用包。
@@ -117,7 +117,7 @@ func Prepare(ctx context.Context, installer, target string) (*Handoff, error) {
 	if _, e = rand.Read(nonce); e != nil {
 		return nil, e
 	}
-	h := &Handoff{Target: target, Stage: stage, Payload: payload, Backup: target + ".previous-" + filepath.Base(stage), Parent: os.Getpid(), Nonce: hex.EncodeToString(nonce), File: filepath.Join(stage, "handoff.json")}
+	h := &Handoff{Target: target, Stage: stage, Payload: payload, Backup: target + ".previous-" + filepath.Base(stage), Parent: os.Getpid(), Nonce: hex.EncodeToString(nonce), File: filepath.Join(stage, "handoff.json"), Args: append([]string(nil), os.Args[1:]...)}
 	if e = store.WriteJSON(h.File, h); e != nil {
 		return nil, e
 	}
@@ -125,26 +125,19 @@ func Prepare(ctx context.Context, installer, target string) (*Handoff, error) {
 	return h, nil
 }
 
-// Start 启动同一已运行二进制的辅助副本；尚不提交替换授权。
+// Start 保留完整签名应用作为辅助副本，避免丢失 Info.plist 签名上下文而被 macOS 拒绝执行。
 func (h *Handoff) Start(executable string) error {
-	source, e := os.Open(executable)
-	if e != nil {
-		return e
+	bundle := ApplicationTarget(executable)
+	if bundle == "" {
+		return fmt.Errorf("更新辅助进程需要完整应用包")
 	}
-	defer source.Close()
-	helper := filepath.Join(h.Stage, "update-helper")
-	dest, e := os.OpenFile(helper, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0700)
-	if e != nil {
-		return e
+	helperBundle := filepath.Join(h.Stage, "helper.app")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if e := exec.CommandContext(ctx, "/usr/bin/ditto", bundle, helperBundle).Run(); e != nil {
+		return fmt.Errorf("无法准备已签名的更新辅助应用: %w", e)
 	}
-	_, copyErr := io.Copy(dest, source)
-	closeErr := dest.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
+	helper := filepath.Join(helperBundle, "Contents", "MacOS", filepath.Base(executable))
 	log, e := os.OpenFile(filepath.Join(h.Stage, "helper.log"), os.O_CREATE|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
@@ -210,7 +203,8 @@ func RunHelper(file string) error {
 	if e = replaceApplication(h.Payload, h.Target, h.Backup); e != nil {
 		return e
 	}
-	if e = exec.CommandContext(ctx, "/usr/bin/open", h.Target).Run(); e != nil {
+	args := append([]string{"-n", h.Target, "--args"}, h.Args...)
+	if e = exec.CommandContext(ctx, "/usr/bin/open", args...).Run(); e != nil {
 		_ = os.Rename(h.Target, h.Payload)
 		_ = os.Rename(h.Backup, h.Target)
 		return fmt.Errorf("新应用启动失败，已尝试恢复旧包")

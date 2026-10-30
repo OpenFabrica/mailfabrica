@@ -1,7 +1,7 @@
 # MailFabrica MCP 服务器
 
 `mailfabrica-cli mcp` 通过 [Model Context Protocol](https://modelcontextprotocol.io) 把 MailFabrica 交给 AI agent：
-stdin/stdout 上按行分隔的 JSON-RPC 2.0（协议版本 `2025-06-18`；`2025-03-26`、`2024-11-05` 的客户端会得到它自己的版本）。
+stdin/stdout 上按行分隔的 JSON-RPC 2.0，当前 Go 服务器返回协议版本 `2024-11-05`。
 日志写 stderr。
 
 两种后端：
@@ -63,20 +63,14 @@ AI 助手、发票导出和日历没有单独的工具，用 `mail_execute` 调�
 
 `to`、`cc` 可以是字符串（`"a@b.com, c@d.com"`）或字符串数组。`ui_*` 工具只在远程模式的 `tools/list` 里出现。
 
-结果是一个文本块，内容是美化过的 JSON；失败时 `isError: true` 并带可读的信息。未知工具、缺必填参数、参数类型错误是
-JSON-RPC `-32602`；JSON 格式错误是 `-32700`；未知方法是 `-32601`。
+结果是一个文本块，内容为 JSON；工具执行失败、未知工具或参数错误通过 `isError: true` 返回可读信息。JSON 格式错误是 `-32700`；未知方法是 `-32601`。
 
-## 资源
-
-- `mailfabrica://commands`：全部命令（`engine.commands`）。
-- `mailfabrica://status`：同步状态（`app.status`）。
-
-`prompts/list` 返回空列表。
+当前 Go 服务器公开 tools 能力，不提供 resources 或 prompts。命令发现使用 `mail_commands`，状态使用 `mail_status`。
 
 ## 会话示例
 
 ```text
-→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}
+→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}
 → {"jsonrpc":"2.0","method":"notifications/initialized"}
 → {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mail_list","arguments":{"limit":5}}}
 → {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mail_read","arguments":{"key":"demo-mailfabrica-dev/3/INBOX"}}}
