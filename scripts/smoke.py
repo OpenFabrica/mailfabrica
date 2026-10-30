@@ -60,7 +60,7 @@ def main():
                     break
                 except (OSError, urllib.error.URLError):
                     if process.poll() is not None or time.monotonic() > deadline:
-                        raise RuntimeError((directory / 'server.log').read_text())
+                        raise RuntimeError((directory / 'server.log').read_text(encoding='utf-8', errors='replace'))
                     time.sleep(.05)
             assert snapshot['demo'] and len(snapshot['view']['messages']) >= 5
             assert snapshot['prefs']['mailListDensity'] == 'compact'
@@ -86,7 +86,7 @@ def main():
             days = execute('calendar.days', {'since': '2026-10-01', 'until': '2026-10-31'})
             assert len(days['days']) == 31 and days['supported'] is False
             assert all(day['lunar'] for day in days['days'])
-            print('PASS: Go host → command engine → store → MIME send → sent mailbox → invoice files → calendar')
+            print('PASS: Go host -> command engine -> store -> MIME send -> sent mailbox -> invoice files -> calendar')
         finally:
             process.terminate()
             try:

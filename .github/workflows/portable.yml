@@ -82,7 +82,7 @@ jobs:
       - name: End-to-end demo
         run: python3 scripts/smoke.py
       - name: Package
-        run: python3 scripts/package.py
+        run: python3 scripts/package.py --target ${{ matrix.platform }} --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: mailfabrica-${{ matrix.platform }}-${{ matrix.arch }}
