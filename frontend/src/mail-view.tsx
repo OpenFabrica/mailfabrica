@@ -46,6 +46,9 @@ function RowItem({
   onSelect: (extend: boolean) => void;
 }) {
   const m = row.message;
+  const countLabel = english
+    ? `${row.unread} unread / ${row.count} total`
+    : `${row.unread} 封未读 / 共 ${row.count} 封`;
   return (
     <button
       className={`mail-row ${selected ? "selected" : ""} ${row.unread ? "unread" : ""}`}
@@ -57,8 +60,16 @@ function RowItem({
       <div className="row-content">
         <div className="row-top">
           <span className="sender">
-            {m.from.name || m.from.email}
-            {row.count > 1 && <span className="count">{row.count}</span>}
+            <span className="sender-name">{m.from.name || m.from.email}</span>
+            {row.count > 1 && (
+              <span
+                className="count"
+                title={countLabel}
+                aria-label={countLabel}
+              >
+                {row.unread}/{row.count}
+              </span>
+            )}
           </span>
           <time>{dateLabel(m.date, english)}</time>
         </div>
@@ -299,6 +310,8 @@ export function Reader({
           <p className="muted">
             {row?.count}{" "}
             {en ? "messages in this conversation" : t("封相关邮件")}
+            {" · "}
+            {row.unread} {en ? "unread" : t("封未读")}
           </p>
         </header>
         <div className="conversation-overview">
@@ -310,13 +323,23 @@ export function Reader({
             .map((m) => (
               <button
                 key={keyString(m.key)}
+                className={`group-message ${m.flags.seen ? "read" : "unread"}`}
                 data-testid={`reader.group.${keyString(m.key)}`}
                 onClick={() => {
                   void run("view.select", { key: keyString(m.key) });
                 }}
               >
-                <strong>{m.from.name || m.from.email}</strong>
-                <time>{dateLabel(m.date, en)}</time>
+                <div className="group-message-top">
+                  <span
+                    className={`unread-dot ${m.flags.seen ? "" : "on"}`}
+                    aria-hidden="true"
+                  />
+                  <strong>{m.from.name || m.from.email}</strong>
+                  <span className="message-read-state">
+                    {t(m.flags.seen ? "已读" : "未读")}
+                  </span>
+                  <time>{dateLabel(m.date, en)}</time>
+                </div>
                 <h3>{m.subject}</h3>
                 <p>{m.preview}</p>
               </button>

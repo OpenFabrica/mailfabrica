@@ -450,9 +450,25 @@ button svg {
   font-size: 12px;
 }
 .sender {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sender-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sender > .count {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+.mail-row.unread .count {
+  color: var(--accent);
+  background: var(--select);
 }
 .unread .sender,
 .unread .row-subject {
@@ -1930,6 +1946,45 @@ button svg {
 }
 .group-messages p {
   font-size: 11px;
+}
+.group-message-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.group-message-top .unread-dot {
+  margin: 0;
+}
+.group-message-top strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-message-top time {
+  float: none;
+  flex-shrink: 0;
+}
+.message-read-state {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.group-message.unread .message-read-state {
+  color: var(--accent);
+  background: var(--select);
+}
+.group-message.read strong,
+.group-message.read h3 {
+  font-weight: 400;
+}
+.group-message.unread strong,
+.group-message.unread h3 {
+  font-weight: 650;
 }
 .search-box {
   height: 28px;

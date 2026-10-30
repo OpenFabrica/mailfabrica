@@ -22,6 +22,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='mailfabrica-native-smoke-') as directory:
         workspace = Path(directory)
         data = workspace / 'data'
+        policy_reader = workspace / 'native-policy'
+        subprocess.run(['swiftc', str(ROOT / 'scripts/native-policy.swift'), '-o', str(policy_reader)], check=True)
         app = workspace / 'MailFabrica Native Smoke.app'
         executable = app / 'Contents/MacOS/mailfabrica'
         executable.parent.mkdir(parents=True)
@@ -74,21 +76,38 @@ def main():
                 """沿用引擎命令设置偏好和邮件标记。"""
                 return call('engine.execute', {'command': command, 'params': params})
 
+            def expect_dock(visible):
+                """从系统进程信息验证 Dock 策略，允许 macOS 完成策略切换。"""
+                expected = '0' if visible else '1'
+                end = time.monotonic() + 5
+                while time.monotonic() < end:
+                    actual = subprocess.check_output([str(policy_reader), str(process.pid)], text=True).strip()
+                    if actual == expected:
+                        return
+                    time.sleep(.1)
+                raise RuntimeError(f'Dock policy: expected {expected}, got {actual}')
+
             try:
                 wait_for(lambda s: s['created'] and s['label'] == '5')
+                expect_dock(True)
                 for _ in range(3):
                     call('ui.closeWindow')
                     wait_for(lambda s: not s['windowVisible'] and s['created'])
+                    expect_dock(False)
                     call('ui.showWindow')
                     wait_for(lambda s: s['windowVisible'])
+                    expect_dock(True)
                 call('ui.closeWindow')
                 wait_for(lambda s: not s['windowVisible'])
+                expect_dock(False)
                 execute('view.select', {'key': 'demo-mailfabrica-dev/5/INBOX'})
                 wait_for(lambda s: s['unread'] == 4 and s['label'] == '4' and not s['windowVisible'])
                 execute('message.markRead', {'read': False})
                 wait_for(lambda s: s['unread'] == 5 and s['label'] == '5')
+                expect_dock(False)
                 execute('app.prefs', {'closeToTray': False})
                 wait_for(lambda s: not s['created'] and s['windowVisible'])
+                expect_dock(True)
                 execute('app.prefs', {'closeToTray': True})
                 wait_for(lambda s: s['created'])
                 execute('folder.markAllRead', {'account': 'demo-mailfabrica-dev', 'folder': 'INBOX'})
@@ -100,7 +119,7 @@ def main():
                 call('ui.closeWindow')
                 if process.wait(timeout=10) != 0:
                     raise RuntimeError('normal close did not exit cleanly')
-                print('PASS: native close/hide → background badge → show ×3 → disable/restore → zero badge → normal exit')
+                print('PASS: native close/hide Dock → background badge → restore window/Dock ×3 → disable/restore → zero badge → normal exit')
             except Exception:
                 log.flush()
                 log.seek(0)

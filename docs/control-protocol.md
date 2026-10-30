@@ -42,6 +42,6 @@
 
 命令参数和日志属于敏感边界；控制端口只应在需要时启用，不提供公网监听选项。
 
-菜单栏常驻的固定原生入口：`ui.tray {}` 返回启用状态、原生图标是否已创建、未读数、显示标签和主窗口状态；`ui.closeWindow {}` 走真实窗口关闭钩子；`ui.showWindow {}` 或 `ui.focusWindow {}` 恢复主窗口。常驻设置仍通过 `engine.execute → app.prefs {closeToTray: true}` 修改。
+菜单栏常驻的固定原生入口：`ui.tray {}` 返回启用状态、原生图标是否已创建、未读数、显示标签和主窗口状态；macOS 初始化完成后还返回系统策略对应的 `dockVisible`。`ui.closeWindow {}` 走真实窗口关闭钩子，macOS 常驻模式同时隐藏 Dock；`ui.showWindow {}` 或 `ui.focusWindow {}` 恢复主窗口及 Dock。常驻设置仍通过 `engine.execute → app.prefs {closeToTray: true}` 修改。
 
 `ui.readerActivateLink {text}` 只激活正文中唯一且文字完全匹配的静态链接，走与用户点击相同的协议校验与系统浏览器处理，不接受脚本。

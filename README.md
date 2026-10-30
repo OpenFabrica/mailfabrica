@@ -62,7 +62,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 ### Desktop experience and privacy
 
 - English and Simplified Chinese, light/dark/system themes, and saved pane widths, collapsed accounts and preferences.
-- Optional menu-bar/system-tray residency: close the main window while synchronization continues, then restore it from the icon.
+- Optional menu-bar/system-tray residency: close the main window while synchronization continues, then restore it from the icon. On macOS, closing also hides the Dock icon; reopening restores it.
 - Inbox unread totals on the tray/menu-bar icon, hidden at zero, with open, sync, settings and quit actions.
 - Script-disabled email iframes, active-content removal and a content security policy. Email JavaScript is not executed.
 - A remote-image setting, isolated email content and bounded attachment/external-input sizes.

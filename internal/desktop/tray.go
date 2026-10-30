@@ -41,7 +41,10 @@ func NewTray(app *application.App, session *engine.Session, window *application.
 			return
 		}
 		t.Sync()
-		window.Hide()
+		application.InvokeSync(func() {
+			window.Hide()
+			setDockVisible(false)
+		})
 	})
 	if runtime.GOOS == "darwin" {
 		app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) { t.Show() })
@@ -57,6 +60,7 @@ func NewTray(app *application.App, session *engine.Session, window *application.
 func (t *Tray) Show() {
 	// App.Show 不自动切换线程；Cocoa 的 unhide 必须和窗口恢复一并运行在主线程。
 	application.InvokeSync(func() {
+		setDockVisible(true)
 		t.app.Show()
 		if t.window.IsMinimised() {
 			t.window.UnMinimise()
@@ -183,7 +187,11 @@ func (t *Tray) State() any {
 		if t.tray != nil {
 			label = t.tray.Label()
 		}
-		result = map[string]any{"enabled": state.CloseToTray, "created": t.tray != nil, "unread": state.Unread, "label": label, "windowVisible": t.window.IsVisible(), "windowMinimised": t.window.IsMinimised()}
+		status := map[string]any{"enabled": state.CloseToTray, "created": t.tray != nil, "unread": state.Unread, "label": label, "windowVisible": t.window.IsVisible(), "windowMinimised": t.window.IsMinimised()}
+		if runtime.GOOS == "darwin" {
+			status["dockVisible"] = dockVisible()
+		}
+		result = status
 	})
 	return result
 }
