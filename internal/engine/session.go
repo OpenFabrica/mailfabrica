@@ -163,7 +163,7 @@ type Session struct {
 	update           UpdateState
 }
 
-// defaultPrefs 与 Rust 版持久化默认值保持一致。
+// defaultPrefs 沿用既有版本的持久化默认值。
 func defaultPrefs() Params {
 	return Params{"closeToTray": false, "markReadOnOpen": true, "remoteImages": true, "syncIntervalMinutes": float64(10), "syncLimit": float64(500), "prefetch": float64(50), "quoteOnReply": true, "saveSent": true, "chineseQuotes": true, "language": "zh-CN", "composeRich": true, "groupBySubject": true, "mailListDensity": "compact", "theme": "system", "collapsed": []any{}, "calendarHiddenAccounts": []any{}, "calendarHiddenCalendars": []any{}, "sidebarWidth": float64(220), "listWidth": float64(350), "aiProvider": "anthropic", "aiBaseUrl": "", "aiModel": ""}
 }

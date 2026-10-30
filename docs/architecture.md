@@ -3,7 +3,7 @@
 ## 背景和核心规则
 
 MailFabrica 的桌面界面、CLI、MCP 与控制通道共用一套命令，不各自实现收发或数据变更。
-`internal/engine/commands.json` 保留迁移基准的 75 个命令，并新增 `ai.summarizeGroup`、`contacts.suggest`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
+`internal/engine/commands.json` 定义 78 个命令，包含 `ai.summarizeGroup`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
 
 - 消息身份为账户 + UTF-8 文件夹路径 + UID；命令字符串为 `账户/uid/文件夹`，目录名继续使用 FNV-1a 64 位哈希。
 - 只有会话持有 `Store`。远端协议返回纯数据；每个账户的网络任务串行，其他账户可独立推进；状态应用在会话锁内完成。

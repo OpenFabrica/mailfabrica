@@ -1,4 +1,4 @@
-// Package store 读写与 Rust 版兼容的 JSON 索引和 EML 原文。
+// Package store 读写与既有版本兼容的 JSON 索引和 EML 原文。
 package store
 
 import (
@@ -110,7 +110,7 @@ func WriteJSON(path string, v any) error {
 	return WriteAtomic(path, b)
 }
 
-// FolderDirName 与 Rust FNV-1a 的字节输入和输出完全一致。
+// FolderDirName 沿用 UTF-8 文件夹路径的 FNV-1a 目录名，保持旧缓存可读。
 func FolderDirName(folder string) string {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(folder))

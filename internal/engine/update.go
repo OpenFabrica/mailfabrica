@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-// Version 由正式构建通过 ldflags 注入，不依赖 Cargo。
+// Version 由构建读取 VERSION 后通过 ldflags 注入。
 var Version = "0.1.7-dev"
 
 // UpdateState 为所有交付入口提供同一更新状态。

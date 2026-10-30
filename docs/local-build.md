@@ -8,7 +8,7 @@ make package
 ```
 
 `make package` 只打包本机平台。macOS 输出 `dist/MailFabrica.app` 与 `dist/mailfabrica-cli`，代码生成图标并使用 ad-hoc 签名；Windows 输出 portable ZIP，Linux 输出 tar.gz。
-Go 与前端产物均来自当前 worktree，不调用 Cargo。构建版本读取 `VERSION`。macOS 构建将编译/链接目标设为 13.0；这不代表已在 macOS 13 实机验收。
+Go 与前端产物均来自当前 worktree。构建版本读取 `VERSION`。macOS 构建将编译/链接目标设为 13.0；这不代表已在 macOS 13 实机验收。
 
 真实数据目录可用 `--data DIR` 或 `MAILFABRICA_HOME` 指定。`--demo` 不给目录时创建并回收自己的临时目录。
 
