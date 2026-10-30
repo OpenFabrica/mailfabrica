@@ -1,0 +1,782 @@
+[
+  {
+    "id": "account.add",
+    "label": "Add Account…",
+    "menu": [
+      "Account"
+    ],
+    "shortcut": null,
+    "params": "{email, password, provider?, name?, login?, imapHost?, imapPort?, imapSecurity?, smtpHost?, smtpPort?, smtpSecurity?, verify?}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "account.detect",
+    "label": "Detect Servers",
+    "menu": [],
+    "shortcut": null,
+    "params": "{email}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "account.list",
+    "label": "List Accounts",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "account.remove",
+    "label": "Remove Account",
+    "menu": [
+      "Account"
+    ],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "account.update",
+    "label": "Account Settings…",
+    "menu": [
+      "Account"
+    ],
+    "shortcut": null,
+    "params": "{id, name?, login?, password?, signature?, imapHost?, …}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.accept",
+    "label": "Use AI Suggestion",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, mode?: \"replace\"|\"append\"}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "ai.clearReply",
+    "label": "Clear AI Quick Reply",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.compose",
+    "label": "AI Write",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": null,
+    "params": "{id, action?: \"write\"|\"polish\"|\"formal\"|\"friendly\"|\"shorter\"|\"longer\"|\"translate\", instruction?}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "ai.config",
+    "label": "AI Assistant Settings",
+    "menu": [],
+    "shortcut": null,
+    "params": "{provider?: \"anthropic\"|\"openai\", baseUrl?, model?, apiKey?}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.dismiss",
+    "label": "Dismiss AI Suggestion",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "ai.quickReply",
+    "label": "AI Quick Reply",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{key?, instruction?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "ai.status",
+    "label": "AI Assistant Status",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "app.dialog",
+    "label": "Open Dialog",
+    "menu": [],
+    "shortcut": null,
+    "params": "{name: \"settings\"|\"contacts\"|\"about\"|\"updates\"}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "app.prefs",
+    "label": "Preferences",
+    "menu": [],
+    "shortcut": null,
+    "params": "{…Prefs fields}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "app.status",
+    "label": "Status",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "calendar.days",
+    "label": "Calendar Days",
+    "menu": [],
+    "shortcut": null,
+    "params": "{since, until, accounts?, calendars?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "calendar.load",
+    "label": "Load Calendar Events",
+    "menu": [],
+    "shortcut": null,
+    "params": "{since, until, force?}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "calendar.status",
+    "label": "Calendar Status",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "compose.attach",
+    "label": "Attach File…",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": null,
+    "params": "{id, path} | {id, name, base64}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.block",
+    "label": "Paragraph Style",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": null,
+    "params": "{id, start, end, block: \"paragraph\"|\"bullet\"|\"numbered\"|\"quote\"|\"heading\"}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.bold",
+    "label": "Bold",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": "Cmd+B",
+    "params": "{id, start, end}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.clearFormat",
+    "label": "Clear Formatting",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": null,
+    "params": "{id, start, end}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.discard",
+    "label": "Discard",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.edit",
+    "label": "Edit Body",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, text, insertStyle?}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.editDraft",
+    "label": "Edit Draft",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": null,
+    "params": "{key?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "compose.forward",
+    "label": "Forward",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": "Cmd+Shift+F",
+    "params": "{key?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "compose.italic",
+    "label": "Italic",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": "Cmd+I",
+    "params": "{id, start, end}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.new",
+    "label": "New Message",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": "Cmd+N",
+    "params": "{account?, to?, cc?, subject?, body?}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
+    "id": "compose.removeAttachment",
+    "label": "Remove Attachment",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, index}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.removeQuote",
+    "label": "Remove Quoted Text",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.reply",
+    "label": "Reply",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": "Cmd+R",
+    "params": "{key?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "compose.replyAll",
+    "label": "Reply All",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": "Cmd+Shift+R",
+    "params": "{key?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "compose.saveDraft",
+    "label": "Save Draft",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.send",
+    "label": "Send",
+    "menu": [
+      "Compose"
+    ],
+    "shortcut": "Cmd+Enter",
+    "params": "{id}",
+    "query": false,
+    "gate": "can_send"
+  },
+  {
+    "id": "compose.set",
+    "label": "Edit Message",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, account?, to?, cc?, bcc?, subject?, body?}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.setFormat",
+    "label": "Rich Text",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": null,
+    "params": "{id, rich: bool}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.setHtml",
+    "label": "Set HTML Body",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, html}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.style",
+    "label": "Text Style",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, start, end, bold?, italic?, underline?, strike?, color?, background?, size?, link?}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.toggle",
+    "label": "Toggle Style",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id, start, end, style: \"bold\"|\"italic\"|\"underline\"|\"strike\"}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "compose.underline",
+    "label": "Underline",
+    "menu": [
+      "Format"
+    ],
+    "shortcut": "Cmd+U",
+    "params": "{id, start, end}",
+    "query": false,
+    "gate": "has_compose"
+  },
+  {
+    "id": "contacts.add",
+    "label": "Add Contact",
+    "menu": [],
+    "shortcut": null,
+    "params": "{email, name?}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "contacts.list",
+    "label": "List Contacts",
+    "menu": [],
+    "shortcut": null,
+    "params": "{query?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "contacts.remove",
+    "label": "Remove Contact",
+    "menu": [],
+    "shortcut": null,
+    "params": "{email}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "folder.create",
+    "label": "New Folder…",
+    "menu": [
+      "Mail"
+    ],
+    "shortcut": null,
+    "params": "{account, name}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
+    "id": "folder.list",
+    "label": "List Folders",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "folder.markAllRead",
+    "label": "Mark All as Read",
+    "menu": [
+      "Mail"
+    ],
+    "shortcut": null,
+    "params": "{account?, folder?}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
+    "id": "invoice.export",
+    "label": "Export Invoices…",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{dir, keys?, since?, until?}",
+    "query": false,
+    "gate": "not_exporting"
+  },
+  {
+    "id": "invoice.list",
+    "label": "List Invoice Messages",
+    "menu": [],
+    "shortcut": null,
+    "params": "{since?, until?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "invoice.status",
+    "label": "Invoice Export Status",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "mail.sync",
+    "label": "Get Mail",
+    "menu": [
+      "Mail"
+    ],
+    "shortcut": "F5",
+    "params": "{account?}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
+    "id": "message.delete",
+    "label": "Delete",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": "Delete",
+    "params": "{keys?}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "message.flag",
+    "label": "Flag",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": "Cmd+Shift+L",
+    "params": "{keys?, flagged?}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "message.get",
+    "label": "Get Message",
+    "menu": [],
+    "shortcut": null,
+    "params": "{key}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "message.junk",
+    "label": "Mark as Junk",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{keys?}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "message.list",
+    "label": "List Messages",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account?, folder?, limit?, offset?, unreadOnly?, group?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "message.markRead",
+    "label": "Mark as Read",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{keys?, read?}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "message.move",
+    "label": "Move to Folder…",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{keys?, folder}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "message.open",
+    "label": "Open Message",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{key?}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "message.raw",
+    "label": "View Source",
+    "menu": [],
+    "shortcut": null,
+    "params": "{key}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "message.saveAttachment",
+    "label": "Save Attachment…",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": null,
+    "params": "{key, index, path}",
+    "query": false,
+    "gate": "has_focus"
+  },
+  {
+    "id": "message.toggleRead",
+    "label": "Mark as Read/Unread",
+    "menu": [
+      "Message"
+    ],
+    "shortcut": "Cmd+Shift+U",
+    "params": "{keys?}",
+    "query": false,
+    "gate": "has_selection"
+  },
+  {
+    "id": "update.cancel",
+    "label": "Cancel Update",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "preparing"
+  },
+  {
+    "id": "update.check",
+    "label": "Check for Updates",
+    "menu": [
+      "Help"
+    ],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "idle"
+  },
+  {
+    "id": "update.download",
+    "label": "Download and Install Update",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "available"
+  },
+  {
+    "id": "update.open",
+    "label": "Install Update",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "ready"
+  },
+  {
+    "id": "update.status",
+    "label": "Update Status",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "view.groupNext",
+    "label": "Next Message in Group",
+    "menu": [
+      "View"
+    ],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "has_group_next"
+  },
+  {
+    "id": "view.groupPrev",
+    "label": "Previous Message in Group",
+    "menu": [
+      "View"
+    ],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "has_group_prev"
+  },
+  {
+    "id": "view.groups",
+    "label": "List Subject Groups",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "view.next",
+    "label": "Next Message",
+    "menu": [
+      "View"
+    ],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "has_messages"
+  },
+  {
+    "id": "view.prev",
+    "label": "Previous Message",
+    "menu": [
+      "View"
+    ],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "has_messages"
+  },
+  {
+    "id": "view.scope",
+    "label": "Show Folder",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account, folder} | {kind: \"allInboxes\"|\"unread\"|\"flagged\"|\"invoices\"}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "view.search",
+    "label": "Search",
+    "menu": [
+      "View"
+    ],
+    "shortcut": null,
+    "params": "{query}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "view.select",
+    "label": "Select Messages",
+    "menu": [],
+    "shortcut": null,
+    "params": "{key} | {keys}, extend?",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "view.selectGroup",
+    "label": "Show Subject Group",
+    "menu": [],
+    "shortcut": null,
+    "params": "{group} | {subject} | {key}",
+    "query": false,
+    "gate": "has_messages"
+  },
+  {
+    "id": "ai.summarizeGroup",
+    "label": "Summarize Conversation",
+    "menu": [
+      "AI"
+    ],
+    "shortcut": null,
+    "params": "{group?}",
+    "query": false,
+    "gate": "has_group"
+  },
+  {
+    "id": "contacts.suggest",
+    "label": "Match Mail Contacts",
+    "menu": [],
+    "shortcut": null,
+    "params": "{query?,limit?}",
+    "query": true,
+    "gate": "always"
+  },
+  {
+    "id": "contacts.timeline",
+    "label": "Contact Mail Timeline",
+    "menu": [],
+    "shortcut": null,
+    "params": "{email,account?,offset?,limit?}",
+    "query": true,
+    "gate": "always"
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "name": "mailfabrica-ui",
+  "private": true,
+  "version": "0.1.6-dev",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "check": "tsc -b"
+  },
+  "dependencies": {
+    "@tiptap/extension-color": "^3.32.1",
+    "@tiptap/extension-link": "^3.32.1",
+    "@tiptap/extension-text-style": "^3.32.1",
+    "@tiptap/extension-underline": "^3.32.1",
+    "@tiptap/react": "^3.32.1",
+    "@tiptap/starter-kit": "^3.32.1",
+    "@wailsio/runtime": "^3.0.0",
+    "html-to-image": "^1.11.13",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
+  }
+}

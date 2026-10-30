@@ -1,69 +1,46 @@
-# macOS 构建与公证
-
-Windows/Linux 使用同一 `cargo xtask package` 入口生成 portable 包，见 [跨平台发布](portable-release.md)。
-
-`cargo xtask package` 将当前 checkout 的 release 构建打成 Finder 可打开的应用和 DMG。此流程不推进版本号、不打标签、不推送、不发布、不安装到 `/Applications`。
-
-## 使用与产物
+# 本地构建
 
 ```sh
-cargo xtask ci
-cargo xtask package
+make deps
+make check
+make package
+./dist/MailFabrica.app/Contents/MacOS/mailfabrica --demo --control 7981
 ```
 
-产物位于 `dist/MailFabrica-<版本>-<架构>/`：
+`make package` 只打包本机平台。macOS 输出 `dist/MailFabrica.app` 与 `dist/mailfabrica-cli`，代码生成图标并使用 ad-hoc 签名；Windows 输出 portable ZIP，Linux 输出 tar.gz。
+Go 与前端产物均来自当前 worktree，不调用 Cargo。构建版本读取 `VERSION`。macOS 构建将编译/链接目标设为 13.0；这不代表已在 macOS 13 实机验收。
 
-- `MailFabrica.app`：包含桌面程序、`Contents/MacOS/mailfabrica-cli`、应用图标和许可证。
-- 同名 `.dmg`：包含应用、指向 `/Applications` 的快捷方式和安装说明。
-- `MailFabrica-logo.png`：1024×1024 透明背景 logo。
-- `build.json`：Git revision、工作区是否有改动、架构、时间、两个程序及 DMG 的 SHA-256。
+真实数据目录可用 `--data DIR` 或 `MAILFABRICA_HOME` 指定。`--demo` 不给目录时创建并回收自己的临时目录。
 
-开发版接 Git 短哈希，工作区不干净时再接 `+`。`Info.plist` 的数字版本是 Cargo 版本去掉开发后缀的部分。版本来源始终是根 `Cargo.toml`。
+开发时可用 `make dev` 打开原生演示程序。需要前端热更新时，在两个终端运行 `./dist/mailfabrica --demo --web 7982` 与 `npm run dev --prefix frontend -- --port 5184`，浏览器访问 `http://127.0.0.1:5184`。
 
-## 流程与边界
+`python3 scripts/smoke.py` 会启动独立 Go 宿主，验证邮件、富文本发送、附件、发票文件和日历数据；只使用临时演示目录。
 
-```mermaid
-flowchart LR
-    A[当前 checkout 和 Cargo 版本] --> B[locked native release 构建]
-    B --> C[临时目录组装 app 和图标]
-    C --> D[核对架构、plist、版本并临时签名]
-    D --> E[创建与校验 DMG]
-    E --> F[记录哈希并移动到最终目录]
-```
+## macOS DMG、Developer ID 签名与公证
 
-只支持当前 macOS 本机架构，设置了 `CARGO_BUILD_TARGET` 时拒绝执行。复用 Cargo 的 `target_directory`，不覆盖既有产物目录；失败时清理临时目录。
-
-默认采用 ad-hoc 本地签名，未经过 Apple 公证。ad-hoc 签名每次打包都不同，钥匙串认不出新包，装上后读邮箱密码会再弹授权框（"始终允许"也要重新点）。
-本机有 Developer ID 证书时，只设置签名身份即可打签名的本地包：不公证，不检查版本号和工作区，但签名每次相同，点过一次"始终允许"后，之后的包都不会再问：
+使用本机已有证书和钥匙串 profile，不将 Apple 密码、API 私钥写入脚本：
 
 ```sh
-APPLE_SIGN_IDENTITY='Developer ID Application: Name (TEAMID)' cargo xtask package
+APPLE_SIGN_IDENTITY='Developer ID Application: 你的名称 (TEAMID)' \
+APPLE_NOTARY_PROFILE='已有的钥匙串 profile' \
+make package PACKAGE_ARGS='--notarize'
 ```
 
-正式包需要再加上公证 profile，两个都是非秘密配置名称，凭据保留在 macOS 钥匙串中：
+输出在 `dist/MailFabrica-<版本>-<源码摘要>-<时间>-<架构>/`，包含 `.app`、拖入 Applications 的 DMG、`build.json` 与 Apple 公证回执/日志。
+按照 [Apple 公证流程](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)，先签名和公证应用并装订票据，再制作/签名/公证 DMG 并装订票据；均检查 Gatekeeper。CLI 随应用放在 `Contents/MacOS` 并单独签名。
+
+该命令只制作安装包，不提交、改版本、推送或创建 Release。允许明确用于本地验收的开发版与未提交源码，清单记录 dirty、完整源码摘要及产物哈希；正式公开发行仍遵循 [release.md](release.md) 的版本与提交门禁。
+不要在运行中的开发 `.app` 上原地重新签名；签名安装包始终写入独立目录。
+
+## Windows / Linux 未签名包
 
 ```sh
-APPLE_SIGN_IDENTITY='Developer ID Application: Name (TEAMID)' \
-APPLE_NOTARY_PROFILE='existing-keychain-profile' \
-cargo xtask package
+make frontend
+python3 scripts/portable.py --target windows --arch amd64
+python3 scripts/portable.py --target windows --arch arm64
+python3 scripts/portable.py --target linux --arch amd64
+python3 scripts/portable.py --target linux --arch arm64
 ```
 
-正式模式要求版本不含 `-dev`、工作区完全干净，`v<version>` 注释标签指向当前 HEAD 且属于本地 `master`。发布前还必须确认标签已在 `origin/master` 上。打包不会创建标签或推送。
-
-打包为两个可执行文件及应用启用 Developer ID、安全时间戳与 Hardened Runtime，并对 DMG 签名；只签名的本地包同样签名 DMG。先提交应用 ZIP 给 Apple，等待 Accepted 并 staple 应用，再生成、签名、公证与 staple DMG；两者都验证票据和 Gatekeeper 判定。`dist/notary-<包名>/` 保存 submission UUID、结果与 Apple 日志；等待超时不等于成功，按 UUID 查询后处理。
-
-`build.json` 记录签名方式、公证状态、两个 submission UUID，以及 staple 后最终文件的 SHA-256。公开发布必须使用这些最终文件，不可重新签名或修改它们。
-
-## Logo
-
-原创蓝色圆角底、白色信封与青色交织线，呼应 Mail 与 Fabrica。`xtask/src/icon.rs` 用矢量路径绘制，不在源仓库存放位图或字体。打包时生成 16–1024 像素 PNG，并由系统 `iconutil` 组装 `.icns`。
-
-启动时显式使用系统应用图标，防止 eframe 默认 logo 覆盖包内的 `.icns`，保证 Finder 和 Dock 显示同一图形。
-
-只预览 logo，无需构建应用：
-
-```sh
-cargo xtask icon
-```
-
-命令写入 `dist/MailFabrica-logo.png`。图形变更需检查大小尺寸；打包逻辑变更需实际生成应用和 DMG，并验证包内程序启动。
+Windows 使用无 CGO 的 Go 交叉构建，输出 ZIP；Linux 使用 Docker Debian 12 + GTK3/WebKitGTK 4.1 的隔离构建容器，输出 tar.gz。
+两者不调用签名工具，应用和 CLI 均随包附带。Linux 在容器内运行协议/引擎测试及 HTTP 演示闭环；它不代替目标机器的图形桌面验收。Windows 运行需要 WebView2，交叉编译不代表实机测试通过。

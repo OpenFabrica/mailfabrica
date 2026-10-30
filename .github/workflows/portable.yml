@@ -1,141 +1,87 @@
-name: Portable releases
+name: Go desktop checks
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch, tag or commit to build
-        required: true
-        default: master
-      publish:
-        description: Upload all four validated packages to an existing draft release
-        type: boolean
-        default: false
+  pull_request:
   push:
-    tags: ['v*']
-    branches: ['release/cross-platform']
+    branches: [master, 'feat/go-wails']
 permissions:
   contents: read
-concurrency:
-  group: portable-${{ inputs.ref || github.ref }}
-  cancel-in-progress: false
 jobs:
   build:
-    name: ${{ matrix.platform }} ${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+            tags: ''
           - runner: windows-2022
-            target: x86_64-pc-windows-msvc
             platform: windows
             arch: amd64
-            flags: '-C target-feature=+crt-static'
+            tags: ''
           - runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
             platform: windows
             arch: arm64
-            flags: '-C target-feature=+crt-static'
+            tags: ''
           - runner: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
             platform: linux
             arch: amd64
-            flags: ''
+            tags: '-tags=gtk3'
           - runner: ubuntu-22.04-arm
-            target: aarch64-unknown-linux-gnu
             platform: linux
             arch: arm64
-            flags: ''
+            tags: '-tags=gtk3'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     env:
-      RUSTUP_TOOLCHAIN: 1.98.0-${{ matrix.target }}
-      RUSTFLAGS: ${{ matrix.flags }}
-      CARGO_BUILD_JOBS: '2'
-      CARGO_PROFILE_DEV_DEBUG: '0'
-      CARGO_PROFILE_TEST_DEBUG: '0'
-      PYTHONUTF8: '1'
-      MAILFABRICA_RELEASE: ${{ (github.ref_type == 'tag' || inputs.publish) && '1' || '0' }}
+      GOFLAGS: ${{ matrix.tags }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Linux native dependencies
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Linux WebKit dependencies
         if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config
+      - name: Frontend
+        shell: bash
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+      - name: Go checks
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build libfontconfig1-dev libfreetype6-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libudev-dev libgtk-3-dev libvulkan1 mesa-vulkan-drivers xvfb fonts-noto-cjk dbus-x11
-      - name: Native Rust toolchain
+          test "$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)" = 'v3.0.0'
+          test -z "$(gofmt -l cmd internal frontend/assets.go)"
+          go vet ./...
+          go test ./...
+      - name: Race checks
+        if: runner.os != 'Windows'
+        run: go test -race ./internal/... ./cmd/mailfabrica-cli
+      - name: Build
         shell: bash
         run: |
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
-          rustc -vV
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: rust-cache
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rust-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}-v1
-          restore-keys: rust-${{ runner.os }}-${{ matrix.arch }}-
-      - name: CI and native package
-        shell: bash
-        run: |
-          cargo xtask ci
-          cargo xtask package
-      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: success() && steps.rust-cache.outputs.cache-hit != 'true'
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
-      - name: Windows packaged application QA
-        if: runner.os == 'Windows'
-        shell: bash
-        run: python xtask/qa.py windows "${{ matrix.arch }}"
-      - name: Linux packaged application QA
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          export XDG_RUNTIME_DIR="$(mktemp -d)"
-          export WGPU_BACKEND=vulkan
-          xvfb-run -a -s '-screen 0 1280x900x24' python3 xtask/qa.py linux "${{ matrix.arch }}"
+          mkdir -p dist
+          suffix=''
+          if [ "$RUNNER_OS" = 'Windows' ]; then suffix='.exe'; fi
+          desktop_flags='-s -w'
+          if [ "$RUNNER_OS" = 'Windows' ]; then desktop_flags="$desktop_flags -H=windowsgui"; fi
+          go build -trimpath -ldflags "$desktop_flags" -o "dist/mailfabrica${suffix}" ./cmd/mailfabrica
+          go build -trimpath -o "dist/mailfabrica-cli${suffix}" ./cmd/mailfabrica-cli
+      - name: End-to-end demo
+        run: python3 scripts/smoke.py
+      - name: Package
+        run: python3 scripts/package.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
         with:
-          name: package-${{ matrix.platform }}-${{ matrix.arch }}
-          if-no-files-found: error
-          retention-days: 14
+          name: mailfabrica-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            dist/*/*.zip
-            dist/*/*.tar.gz
-            dist/*/*.sha256
-            dist/*/*.json
-            dist/qa/*
-  upload:
-    needs: build
-    if: github.ref_type == 'tag' || inputs.publish
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      actions: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: package-*
-          path: dist/artifacts
-          merge-multiple: true
-      - name: Verify and upload portable assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 xtask/upload.py
+            dist/MailFabrica.app
+            dist/*.zip
+            dist/*.tar.gz
+            dist/mailfabrica-cli*

@@ -2,76 +2,66 @@
 
 [English](README.md) | 简体中文
 
-Rust 原生的桌面邮件客户端。界面和用法借鉴 Foxmail，工程做法沿用 GridFabrica（分层 crate、egui 界面、一切皆命令、控制通道、MCP）。
-
-## 截图
-
-阅读窗格按原格式显示 HTML 邮件，效果接近浏览器；同主题的邮件在列表里合成一行：
-
-![主界面：HTML 邮件和按主题归类的列表](docs/screenshots/main.png)
-
-点开归类的那一行，列出这个主题的全部邮件：
-
-![主题组：同一主题的所有邮件](docs/screenshots/group.png)
-
-回复 HTML 邮件时原文按原格式引用，发出去和 Gmail 的引用格式一样：
-
-![回复：原文按原格式引用](docs/screenshots/reply.png)
-
-截图来自演示模式（`--demo`），里面的账户和邮件都是虚构的。
+Go + Wails v3 桌面邮件客户端。前端使用 React、TypeScript 和 Vite；界面借鉴 Magpie 的配色与控件，并按 Foxmail 的紧凑三栏方式组织邮箱、邮件列表和阅读窗格。
 
 ## 功能
-- **三栏界面**：账户/文件夹树（未读数）· 按"今天/昨天/本周/本月/更早"分组的邮件列表 · 阅读窗格 + 快速回复。
-- **工具栏**：收取、写邮件、回复、全部回复、转发、删除、标记（已读/未读/红旗）、移动到、垃圾邮件、搜索。
-- **统一视图**：所有收件箱、未读邮件、红旗邮件（跨账户）。
-- **写信**：多窗口，收件人自动补全（地址簿），附件，存草稿 / 从草稿继续编辑，签名，回复引用、转发带原附件。
-- **账户**：输入邮箱自动填服务器（QQ/Foxmail、163、126、yeah、新浪、阿里、139、Gmail、Outlook、iCloud、Yahoo、Zoho），可手动改；密码存系统钥匙串。
-- **协议**：IMAP4rev1（UID 增量同步、MOVE/UIDPLUS、中文文件夹名、网易 ID 命令）+ SMTP（465 TLS / 587 STARTTLS，AUTH PLAIN/LOGIN）。
-- **本地存储**：每账户一个目录，JSON 索引 + `.eml` 原文 + 地址簿，离线可读。
-- **HTML 邮件**：macOS 使用系统 WKWebView 排版、选择和滚动正文，远程图片默认开启，可在全局设置关闭，失败时回退纯文本；其他平台和写信窗口的原文引用保留 Blitz CPU 渲染。[阅读说明](docs/mail-reading.md)。
-- **按主题归类**：同主题（忽略 `Re:`、`Fwd:`、`回复：` 等前缀）的邮件合成一行，可在列表菜单或设置里关闭。
-- **AI 写信助手**：在写信窗口里让 AI 起草正文，或改写自己写的内容（润色、更正式、更友好、更短、更长、翻译）。结果是一条建议，可以采用（替换或接在后面）或放弃；只改自己写的部分，不动签名和原文引用。回复、转发时会把原邮件作为上下文交给 AI。
-- **AI 快速回复**：为当前打开的邮件起草一条简短回复，填进阅读窗格下方的快速回复框。
-- **一键导出发票**：侧栏的虚拟文件夹"发票"列出全部账户里的发票邮件。导出时先选时间范围（本月、上个月、自定义日期等），再勾选要导出的邮件，然后把发票附件（pdf/ofd/xml/zip）按 `日期_发件人_原名` 存下来，并生成 `发票清单.csv`（日期、发件人、主题、金额、文件、正文里的下载链接）。
-- **日历视图**：按月显示每天收到的邮件和系统日历里的日程（macOS 日历，通过 EventKit 读取，第一次会请求日历权限），格子里带农历。左侧勾选要显示的邮箱和日历；点邮件直接打开。
-- **中英文界面、浅色/深色主题**。
-- **可编程**：所有操作都是命令，可通过控制通道、命令行、MCP 调用。
 
-## 运行
+- 多账户 IMAP/SMTP、服务商检测与企业邮箱预设、TLS/STARTTLS、中文文件夹、UID 增量同步与离线阅读。
+- 统一收件箱、未读、红旗、发票视图，搜索、主题归类、多选、标记、移动和删除。
+- 隔离 HTML 阅读、远程图片开关、CID 内嵌图片、附件保存和纯文本模式。
+- 独立写信窗口、回复/全部回复/转发、富文本、附件、签名、草稿与联系人。
+- Anthropic / OpenAI 兼容 AI 助手，建议先预览再采用；密钥使用原有系统凭据服务。
+- 发票附件与 CSV 导出、邮件日历与农历、macOS EventKit 系统日历。
+- 中英界面、明暗主题、紧凑列表和持久化偏好。
+- 共用 Go 命令引擎的桌面、CLI、MCP 和回环 JSON 行控制通道。
+- 固定 GitHub 来源、SHA-256 与 macOS 发布者验证；应用包支持正常退出后的更新交接。
+
+## 开发与运行
+
+需要 Go（版本见 `go.mod`）、Node.js 22 和平台原生编译环境。macOS 需要 Xcode Command Line Tools；Linux 默认使用 GTK4/WebKitGTK 6，也可用 `GOFLAGS=-tags=gtk3` 配合 GTK3/WebKitGTK 4.1。
+
 ```sh
-# 演示模式（内存假服务器，不需要真实账户）
-cargo run --release -p mailfabrica -- --demo
+make deps
+make demo                 # 隔离演示邮箱，不读取真实账户和凭据
+make check                # 前端构建/格式、Go vet、测试、race 检查
+make package              # 生成本机应用；macOS 为 dist/MailFabrica.app
 
-# 正常使用（数据在 ~/Library/Application Support/MailFabrica，可用 --data 或 MAILFABRICA_HOME 改）
-cargo run --release -p mailfabrica
+# 正常数据目录：只在你明确运行正常模式时打开
+./dist/mailfabrica
+./dist/mailfabrica --data /path/to/mail
 
-# 命令行
-cargo run -p mailfabrica-cli -- --demo list
-cargo run -p mailfabrica-cli -- account add me@qq.com --password-stdin
-cargo run -p mailfabrica-cli -- sync && cargo run -p mailfabrica-cli -- list --unread
+# CLI
+./dist/mailfabrica-cli --demo list
+./dist/mailfabrica-cli --demo commands --json
+./dist/mailfabrica-cli --demo mcp
 ```
-QQ、163、126 等邮箱要先在网页版设置里开启 IMAP/SMTP，并用 **授权码** 代替登录密码。Gmail 用应用专用密码。
 
-## AI 助手设置
-AI 功能默认关闭，先在 **设置** 里配置一个服务：
-- **Anthropic**（默认）：地址 `https://api.anthropic.com`，模型 `claude-opus-5-5`，只需填 API 密钥。
-- **OpenAI 兼容接口**：任何 Chat Completions 接口（DeepSeek、通义千问/DashScope、Ollama 等），地址和模型必填。
+Go 构建与运行不依赖 Rust、Cargo 或 Rust 子进程。版本由 `VERSION` 管理。
 
-API 密钥存系统钥匙串（和邮箱密码同一处），不会写进 `prefs.json`。地址必须是 `https`；只有本机和局域网地址（如 `192.168.x.x`、`*.local`，例如 Ollama 或自己部署的模型）可以用 `http`。只有你点了 AI 操作，邮件内容才会发给所配置的 AI 服务。
+前端热更新开发可在两个终端分别运行：
 
-命令行见 `docs/cli.md`，MCP 见 `docs/mcp.md`，控制通道见 `docs/control-protocol.md`。
+```sh
+./dist/mailfabrica --demo --web 7982
+npm run dev --prefix frontend -- --port 5184
+```
 
-## 开发
-- 架构与约定：`AGENTS.md`；发版：`docs/release.md`。
-- 本地 macOS 应用与 DMG：`cargo xtask package`（见 `docs/local-build.md`）；预览 logo：`cargo xtask icon`。
-- 提交前：`cargo xtask ci`（fmt、clippy -D warnings、测试、分层检查）。
+浏览器访问 `http://127.0.0.1:5184`；它通过本地开发代理连接同一 Go 引擎。原生文件对话框与系统剪贴板需在 Wails 桌面程序中验收。
 
-## 致谢
-本项目在 [Claude Code](https://www.anthropic.com/claude-code)（Anthropic 的 Claude）协助下开发。
+## 数据兼容
+
+沿用原账户 JSON、文件夹索引、`.eml` 原文、联系人、消息键及 FNV-1a 文件夹目录。旧 `ui.json` 的主题、语言、宽度与日历来源过滤会读取到新偏好；原文件不被覆盖。macOS 默认目录仍为 `~/Library/Application Support/MailFabrica`，可用 `--data` 或 `MAILFABRICA_HOME` 覆盖。凭据服务名保持 `MailFabrica`。
+
+迁移测试使用独立演示目录。请先使用数据副本验证自己的邮箱；QQ、网易等通常需要开启 IMAP 并使用授权码。AI 只有在用户点击相应操作时才发送所需邮件内容。
+
+## 文档与验证边界
+
+- [架构与领域规则](docs/architecture.md)
+- [迁移记录与命令目录](docs/go-wails-migration.md)
+- [本地构建](docs/local-build.md)、[CLI](docs/cli.md)、[MCP](docs/mcp.md)、[控制协议](docs/control-protocol.md)
+- [邮件阅读](docs/mail-reading.md)、[更新](docs/updates.md)、[跨平台构建](docs/portable-release.md)
+
+本地 `.app` 使用临时 ad-hoc 签名，便于开发测试；它不是已公证的正式发行版。Windows/Linux 的构建配置和本机 macOS 的验证结果分别报告，不将交叉编译当作目标系统运行验收。
 
 ## 许可
-MIT OR Apache-2.0。
 
-- 应用更新：工具栏菜单选择“检查更新”，下载、校验后打开 macOS 安装器。见 [使用帮助](docs/update-help.md) 与 [开发文档](docs/updates.md)。
-
-- Windows amd64/arm64 与 Linux amd64/arm64 的 portable 包在对应原生系统构建与验收，见 [跨平台发布](docs/portable-release.md)。
+MIT OR Apache-2.0。Magpie 作为界面研究参考，未引入其网关、插件或遥测业务。

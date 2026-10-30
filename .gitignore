@@ -6,3 +6,10 @@
 /.claude/
 
 __pycache__/
+
+# Go + Wails 构建与前端依赖
+/frontend/node_modules/
+/frontend/dist/
+/frontend/*.tsbuildinfo
+/mailfabrica
+/mailfabrica-cli

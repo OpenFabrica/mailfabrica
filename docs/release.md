@@ -1,6 +1,6 @@
 # 版本号与发版规范
 
-做法参照 Firefox Nightly / Rust nightly。
+开发版本持续使用 `-dev`；正式发布需要独立授权和目标平台验收。
 
 ## 规则
 
@@ -8,11 +8,11 @@
    不带标记的版本号，一定是发出去的包。
 2. **能取到 git 信息时，开发版接短哈希。** 例如 `0.1.1-dev-1a2b3c4`；工作区有未提交改动时再加 `+`。由打包脚本接，不写进源码。
 3. **开发版不打标签，不建 Release。**
-4. **版本号只存一处：** 根目录 `Cargo.toml` 的 `[workspace.package] version`。
-   各 crate 用 `version.workspace = true`。About 页、安装包文件名在构建时读 `env!("CARGO_PKG_VERSION")`，不手抄。
+4. **版本号来源：** 根目录 `VERSION`。Go 构建通过 `-ldflags -X` 注入版本，打包脚本读取同一文件。
+   前端 package 版本属于构建元数据，不能代替应用版本。旧 Cargo 文件仅作迁移比对。
    只认数字的字段（Info.plist `CFBundleShortVersionString`、Windows 资源文件）在打包脚本里去掉后缀再传。
 5. **发版步骤：**
-   1. 去掉开发标记（`0.1.0-dev` → `0.1.0`），跑一次 `cargo check`，让 `Cargo.lock` 跟着更新并一起提交。
+   1. 去掉开发标记（`0.1.0-dev` → `0.1.0`），运行 `make check` 和 `make package`，核对当前源码生成的产物。
    2. `CHANGELOG.md` 顶上加 `## <版本> · <日期> · <渠道>`，渠道是 `alpha` / `beta` / `rc` / `stable`。
       更新日志手写，面向用户，一行一条。先按上个标签以来的 `git log` 起草，给用户看过再定稿。
    3. 合并到 `master`，提交 `chore(release): <版本>`，打注释标签 `v<版本>`；按 `docs/local-build.md` 构建并完成 Apple 公证、票据及运行验证，再推送分支和标签。

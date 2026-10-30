@@ -1,58 +1,12 @@
-# 跨平台发布
+# 跨平台构建与发行边界
 
-## 领域与平台
+默认工具链为 Go + Node/Vite。`.github/workflows/portable.yml` 配置 macOS、Windows amd64/arm64 和 Linux amd64/arm64 原生构建、检查、隔离演示验证与产物上传；该工作流不自动发布 GitHub Release。
 
-同一个版本标签生成 macOS、Windows 和 Linux 产物，包内同时包含桌面程序与 CLI。`amd64` 是 `x86_64` 的发布名称，`arm64` 是 `aarch64`；禁止根据运行机器名称猜测另一个架构。
+Linux CI 使用 `GOFLAGS=-tags=gtk3`，安装 GTK3 和 WebKitGTK 4.1；默认 GTK4 构建需要对应原生库。Windows 桌面运行需要 WebView2。
 
-| 平台 | 架构 | 产物 | 验证环境 |
-|---|---|---|---|
-| macOS | arm64 | `.app` 与 `.dmg` | 本地原生构建、Developer ID、Apple 公证 |
-| Windows | amd64、arm64 | `.zip` portable | Windows 2022、Windows 11 Arm 原生 runner |
-| Linux | amd64、arm64 | `.tar.gz` portable | Ubuntu 22.04 的两个原生架构 runner |
+macOS 使用 Developer ID 签名和 Apple 公证，命令见 [local-build.md](local-build.md)。应用与 DMG 分别装订票据并检查 Gatekeeper。
+Windows 与 Linux 按用户要求始终生成未签名 portable 包；`scripts/portable.py` 支持两种架构，Apple 参数不能用于这两个平台。
 
-Windows 发布包使用静态 CRT，解压后运行 `mailfabrica.exe`，CLI 为 `mailfabrica-cli.exe`。Linux 运行 `./mailfabrica` 或 `./mailfabrica-cli`，要求 glibc 2.35 或更新版本及正常的图形驱动、fontconfig 和 libxkbcommon-x11；中文字体建议 Noto CJK。包内包含许可证、安装说明、共享图标、构建记录；Linux 另带 `.desktop` 文件。
+本机执行 `make package` 仅生成本机包。交叉编译只证明目标代码能够编译，不能代替窗口、文件对话框、字体、邮件正文和系统集成的目标系统验收。
 
-Ubuntu/Debian 运行依赖：`sudo apt install libfontconfig1 libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers fonts-noto-cjk`。X11 键盘库由窗口库动态加载，单独运行 `ldd` 无法发现它缺失，因此发布验收必须实际启动 GUI。
-
-从 0.1.2 开始，应用内检查更新会选择本机架构，下载并校验安装包，自动替换应用文件并重启，失败时恢复旧版。安装目录必须允许当前用户写入，邮件数据和其他用户文件不进入替换计划。0.1.0/0.1.1 仍使用旧更新流程，需要先安装新版。
-
-macOS 额外验证 Apple 发布者、完整应用签名及 Gatekeeper 公证信任；Windows/Linux 使用固定官方 HTTPS 发布源与 GitHub SHA-256 digest，尚无独立发布者签名。更新流程与限制见 [应用更新](updates.md) 和 [使用帮助](update-help.md)。
-
-## 实现边界
-
-- `crates/brand`（L0）只负责原创矢量图标的 PNG、ICO 和 RGBA 编码，不依赖 core、UI、网络或存储。增加此独立模块是为了让窗口图标、Windows PE 资源和打包工具共享唯一源素材，避免在业务 core 中引入图形职责或保存位图。
-- `apps/mailfabrica/build.rs` 在 Windows 目标生成 ICO 并嵌入 PE 图标/产品版本资源；运行窗口使用同一 RGBA，macOS 保留 bundle 图标。
-- `xtask/src/portable.rs` 只在对应原生 OS/架构运行，拒绝 `CARGO_BUILD_TARGET`。归档失败清理临时目录，不覆盖现有发布包。
-- `xtask/qa.py` 是交付验收工具：检查归档和包内哈希、PE/ELF 架构、Windows 图标资源、CLI 响应与演示桌面截图，关闭自己启动的进程，再验收真实更新助手的应用替换、GUI 重启与用户文件保留。测试只使用临时演示安装，不使用真实账户。
-- `.github/workflows/portable.yml` 使用固定 SHA 的官方 Actions；构建 job 只读仓库，只有全部平台成功后的上传 job 能写 Release。
-
-## 流程
-
-```mermaid
-flowchart LR
-    A[同一源码 commit / tag] --> W1[Windows amd64]
-    A --> W2[Windows arm64]
-    A --> L1[Linux amd64]
-    A --> L2[Linux arm64]
-    W1 & W2 & L1 & L2 --> B[fmt / clippy / tests / layers]
-    B --> C[原生 release 构建与归档]
-    C --> D[解包校验、运行 CLI、桌面截图与自动替换验收]
-    D --> E[全部成功后上传至草稿 Release]
-    E --> F[合并 macOS 公证产物并核对 GitHub digest]
-    F --> G[人工或已授权的代理公开发布]
-```
-
-先在发布分支构建并查看四种截图，再合并到 `master`、打正式标签。tag push 重新构建该标签；也可通过 workflow_dispatch 指定 ref。`publish=false` 只生成 Actions artifacts，`publish=true` 要求稳定版本、标签指向当前 commit 并属于 `origin/master`。
-
-上传前核对四种归档都来自同一 commit。每种平台都有独立 `.json` 与 `.sha256`，避免多架构的 `build.json` 相互覆盖。重跑只复用 digest 完全相同的既有资产；拒绝覆盖不同资产或修改已公开的 Release。公开发布前将 macOS 公证包和完整更新说明一起加入草稿并验证全部资产。
-
-## 本地运行
-
-原生系统安装 Rust、C/C++ 编译工具、CMake。Windows 使用 MSVC 与 Windows SDK；正式 Windows 包设置 `RUSTFLAGS=-C target-feature=+crt-static`。Linux 需要 clang、fontconfig/freetype、X11/Wayland 图形开发库及 Vulkan 驱动。
-
-```sh
-cargo xtask ci
-cargo xtask package
-```
-
-正式包设置 `MAILFABRICA_RELEASE=1`。产物在 `dist/MailFabrica-<version>-<platform>-<arch>/`，目录内包含归档、校验文件与构建记录。macOS 签名与公证配置见 [本地构建](local-build.md)。
+正式发行前应分别取得各平台构建和真实运行证据，完成 macOS Developer ID 签名、公证、DMG 与更新验证，再按明确授权上传 Release。当前迁移的本机验证结果见 `docs/go-wails-migration.md`。

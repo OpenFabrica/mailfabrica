@@ -1,3 +1,6 @@
+> 历史说明：本文记录 `bfd5b8f` 及此前 Rust/egui/Blitz 的实现，用于迁移比对。
+> 当前 Go + Wails 阅读实现见 [mail-reading.md](mail-reading.md)，不要使用本文的旧构建命令。
+
 # HTML 邮件预览与下载
 
 邮件模板经常用嵌套表格、`cellpadding`、`cellspacing` 和单元格背景组织内容。阅读器需要尽快显示正文，并保留模板的间距、按钮、图片和中文排版。

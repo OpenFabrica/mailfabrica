@@ -3,7 +3,7 @@
 不开窗口用 MailFabrica：管理账户、收信、看信、搜索、发信，还能当 MCP 服务器。出错时信息写 stderr，退出码非零。
 
 ```sh
-cargo install --path apps/mailfabrica-cli     # 或：cargo run -p mailfabrica-cli -- <子命令>
+make build     # 程序为 dist/mailfabrica-cli
 ```
 
 ## 全局选项
@@ -81,3 +81,5 @@ mailfabrica-cli --demo list
 mailfabrica-cli --demo read <list 里的 key>
 mailfabrica-cli --demo send --to a@b.com --subject 测试 --body hi
 ```
+
+联系人历史查询使用 `contacts.timeline {email, account?, offset?, limit?}`，按本地缓存返回去重后的时间线，详见 [联系人时间线](contact-timeline.md)。
