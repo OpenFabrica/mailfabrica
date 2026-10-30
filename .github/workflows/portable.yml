@@ -57,7 +57,11 @@ jobs:
         shell: bash
         run: |
           test "$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3)" = 'v3.0.0'
-          test -z "$(gofmt -l cmd internal frontend/assets.go)"
+          unformatted="$(gofmt -l cmd internal frontend/assets.go)"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
           go vet ./...
           go test ./...
       - name: Race checks
