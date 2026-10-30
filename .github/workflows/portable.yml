@@ -69,10 +69,12 @@ jobs:
           mkdir -p dist
           suffix=''
           if [ "$RUNNER_OS" = 'Windows' ]; then suffix='.exe'; fi
-          desktop_flags='-s -w'
+          version="$(cat VERSION)"
+          build_flags="-s -w -X github.com/openfabrica/mailfabrica/internal/engine.Version=${version}"
+          desktop_flags="$build_flags"
           if [ "$RUNNER_OS" = 'Windows' ]; then desktop_flags="$desktop_flags -H=windowsgui"; fi
           go build -trimpath -ldflags "$desktop_flags" -o "dist/mailfabrica${suffix}" ./cmd/mailfabrica
-          go build -trimpath -o "dist/mailfabrica-cli${suffix}" ./cmd/mailfabrica-cli
+          go build -trimpath -ldflags "$build_flags" -o "dist/mailfabrica-cli${suffix}" ./cmd/mailfabrica-cli
       - name: End-to-end demo
         run: python3 scripts/smoke.py
       - name: Package
