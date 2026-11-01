@@ -14,6 +14,7 @@ import {
   Reply,
   ReplyAll,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
   ArrowUpRight,
@@ -364,6 +365,10 @@ export function Reader({
   if (!state.message) return <ReaderLanding ui={ui} actions={landing} />;
   const meta = state.message.meta;
   if (!meta) return null;
+  // 垃圾邮件文件夹中的邮件提供「不是垃圾邮件」，一键移回收件箱
+  const inJunk = !!state.folders[meta.key.account]?.some(
+    (f) => f.path === meta.key.folder && f.role === "junk",
+  );
   const create = async (command: string) => {
     const result = await run<{
       id: number;
@@ -453,6 +458,17 @@ export function Reader({
           >
             <ArrowUpRight />
           </IconButton>
+          {inJunk && (
+            <IconButton
+              label={t("不是垃圾邮件")}
+              data-testid="reader.notJunk"
+              onClick={() => {
+                void run("message.notJunk");
+              }}
+            >
+              <ShieldCheck />
+            </IconButton>
+          )}
           <IconButton
             label={en ? "Delete" : t("删除")}
             onClick={() => {
@@ -491,11 +507,11 @@ export function Reader({
                 </button>
                 <button
                   onClick={() => {
-                    void run("message.junk");
+                    void run(inJunk ? "message.notJunk" : "message.junk");
                     setMenu(false);
                   }}
                 >
-                  {t("标为垃圾邮件")}
+                  {inJunk ? t("不是垃圾邮件") : t("标为垃圾邮件")}
                 </button>
                 <label>
                   {t("移动到")}

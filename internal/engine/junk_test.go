@@ -243,3 +243,34 @@ func TestParseJunkTolerant(t *testing.T) {
 		t.Fatalf("error must include reply snippet: %v", err)
 	}
 }
+
+// TestNotJunkMovesBackToInbox 验证误判邮件可一键移回收件箱，已在收件箱的邮件不产生移动。
+func TestNotJunkMovesBackToInbox(t *testing.T) {
+	s := testSession(t)
+	executeTest(t, s, "message.junk", Params{"keys": []any{"demo-mailfabrica-dev/1/INBOX"}})
+	s.mu.Lock()
+	junk, err := s.Store.Index("demo-mailfabrica-dev", "Junk")
+	if err != nil || len(junk.Messages) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("junk %v", err)
+	}
+	key := junk.Messages[0].Key.String()
+	s.mu.Unlock()
+	executeTest(t, s, "message.notJunk", Params{"keys": []any{key}})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	junk, _ = s.Store.Index("demo-mailfabrica-dev", "Junk")
+	inbox, _ := s.Store.Index("demo-mailfabrica-dev", "INBOX")
+	if len(junk.Messages) != 0 || len(inbox.Messages) != 11 {
+		t.Fatalf("junk %d inbox %d", len(junk.Messages), len(inbox.Messages))
+	}
+	found := false
+	for _, m := range inbox.Messages {
+		if m.Subject == "下周产品评审安排" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("message not back in inbox")
+	}
+}

@@ -276,6 +276,16 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 			if e != nil {
 				return nil, e
 			}
+		case "message.notJunk":
+			// 误判的邮件移回各自账户的收件箱；已在收件箱的跳过
+			op = "move"
+			value, e = s.roleFolder(k.Account, "inbox")
+			if e != nil {
+				return nil, e
+			}
+			if value == k.Folder {
+				continue
+			}
 		case "message.delete":
 			op = "move"
 			trash, err := s.roleFolder(k.Account, "trash")

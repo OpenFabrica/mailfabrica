@@ -3,7 +3,7 @@
 ## 背景和核心规则
 
 MailFabrica 的桌面界面、CLI、MCP 与控制通道共用一套命令，不各自实现收发或数据变更。
-`internal/engine/commands.json` 定义 82 个命令，包含 `ai.summarizeGroup`、`ai.scanJunk`、`account.markAllRead`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
+`internal/engine/commands.json` 定义 83 个命令，包含 `ai.summarizeGroup`、`ai.scanJunk`、`account.markAllRead`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
 
 - 消息身份为账户 + UTF-8 文件夹路径 + UID；命令字符串为 `账户/uid/文件夹`，目录名继续使用 FNV-1a 64 位哈希。
 - 只有会话持有 `Store`。远端协议返回纯数据；每个账户的网络任务串行，其他账户可独立推进；状态应用在会话锁内完成。
@@ -72,4 +72,4 @@ UI 与引擎变更均需验证可观察结果。原生 WebView 的 DOM 截图不
 
 `ai.scanJunk {account?, folder?, limit?}` 默认检查当前列表，指定账户时检查其文件夹（默认收件箱）。跳过垃圾邮件、已删除、已发送和草稿，按时间取最近 `limit` 封（默认 100，最多 200）。只发送发件人、时间、主题和截断后的预览，不下载正文或附件。模型只返回编号数组；解析时去掉推理模型的思考段，逐段尝试 JSON 并取最后一段非空的合规结果，兼容字符串编号与包裹对象，失败时错误附带回复开头。越界和重复编号被忽略，不信任模型给出的邮件键。每 10 封一批、最多 3 个请求并行；每批完成即在快照写回 `done`、`current`（正在识别的主题）和已发现候选，界面边识别边显示。部分批次失败时保留已识别结果，并提示未能识别的封数。
 
-结果保存在快照 `aiJunk`（busy、scanned、candidates、error），只是建议。`ai.cleanJunk {keys?}` 只接受候选中的邮件，经 `message.junk` 移到各账户的垃圾邮件文件夹（同一文件夹合并为一次连接的 `Remote.MoveMany`），提交后直接关闭面板；界面为右下角非模态面板，识别和报错期间不遮挡列表与阅读；扫描后已不存在的邮件直接从候选去掉。`ai.clearJunk` 清空结果。实现见 `internal/engine/junk.go` 和 `frontend/src/junk-dialog.tsx`。
+结果保存在快照 `aiJunk`（busy、scanned、candidates、error），只是建议。`ai.cleanJunk {keys?}` 只接受候选中的邮件，经 `message.junk` 移到各账户的垃圾邮件文件夹（同一文件夹合并为一次连接的 `Remote.MoveMany`），提交后直接关闭面板；界面为右下角非模态面板，识别和报错期间不遮挡列表与阅读；扫描后已不存在的邮件直接从候选去掉。`ai.clearJunk` 清空结果。误判邮件在垃圾邮件文件夹中用 `message.notJunk` 移回所属账户收件箱，阅读工具栏和「更多」菜单均提供入口。实现见 `internal/engine/junk.go` 和 `frontend/src/junk-dialog.tsx`。

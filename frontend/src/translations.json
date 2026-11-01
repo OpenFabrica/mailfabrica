@@ -296,5 +296,6 @@
   "重新识别": "Check again",
   "移到垃圾邮件": "Move to junk",
   "发现": "found",
-  "封垃圾邮件": "junk"
+  "封垃圾邮件": "junk",
+  "不是垃圾邮件": "Not junk"
 }
