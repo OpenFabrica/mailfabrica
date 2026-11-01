@@ -70,6 +70,6 @@ UI 与引擎变更均需验证可观察结果。原生 WebView 的 DOM 截图不
 
 `account.markAllRead {id}` 将该账户全部文件夹的未读邮件标为已读，不受当前列表范围影响；与 `folder.markAllRead` 共用 `markAllRead`，最终经 `message.markRead` 写回服务器。已读和红旗先写本地索引并刷新视图；后台按账户 + 文件夹 + 标记合并为一次 IMAP 连接和分段 `UID STORE`（`Remote.SetFlags`），不逐封登录。服务器失败时回滚本地标记，相同错误去重后只提示失败封数和至多 3 条原因。
 
-`ai.scanJunk {account?, folder?, limit?}` 默认检查当前列表，指定账户时检查其文件夹（默认收件箱）。跳过垃圾邮件、已删除、已发送和草稿，按时间取最近 `limit` 封（默认 100，最多 200）。只发送发件人、时间、主题和截断后的预览，不下载正文或附件。模型只返回编号数组，越界和重复编号被忽略，不信任模型给出的邮件键。每 10 封一批、最多 3 个请求并行；每批完成即在快照写回 `done`、`current`（正在识别的主题）和已发现候选，界面边识别边显示。部分批次失败时保留已识别结果，并提示未能识别的封数。
+`ai.scanJunk {account?, folder?, limit?}` 默认检查当前列表，指定账户时检查其文件夹（默认收件箱）。跳过垃圾邮件、已删除、已发送和草稿，按时间取最近 `limit` 封（默认 100，最多 200）。只发送发件人、时间、主题和截断后的预览，不下载正文或附件。模型只返回编号数组；解析时去掉推理模型的思考段，逐段尝试 JSON 并取最后一段非空的合规结果，兼容字符串编号与包裹对象，失败时错误附带回复开头。越界和重复编号被忽略，不信任模型给出的邮件键。每 10 封一批、最多 3 个请求并行；每批完成即在快照写回 `done`、`current`（正在识别的主题）和已发现候选，界面边识别边显示。部分批次失败时保留已识别结果，并提示未能识别的封数。
 
-结果保存在快照 `aiJunk`（busy、scanned、candidates、error），只是建议。`ai.cleanJunk {keys?}` 只接受候选中的邮件，经 `message.junk` 移到各账户的垃圾邮件文件夹（同一文件夹合并为一次连接的 `Remote.MoveMany`），提交后界面直接关闭弹窗；扫描后已不存在的邮件直接从候选去掉。`ai.clearJunk` 清空结果。实现见 `internal/engine/junk.go` 和 `frontend/src/junk-dialog.tsx`。
+结果保存在快照 `aiJunk`（busy、scanned、candidates、error），只是建议。`ai.cleanJunk {keys?}` 只接受候选中的邮件，经 `message.junk` 移到各账户的垃圾邮件文件夹（同一文件夹合并为一次连接的 `Remote.MoveMany`），提交后直接关闭面板；界面为右下角非模态面板，识别和报错期间不遮挡列表与阅读；扫描后已不存在的邮件直接从候选去掉。`ai.clearJunk` 清空结果。实现见 `internal/engine/junk.go` 和 `frontend/src/junk-dialog.tsx`。

@@ -1,9 +1,9 @@
 import { t } from "./i18n";
 import { useEffect, useRef, useState } from "react";
-import { LoaderCircle, RefreshCw, ShieldAlert } from "lucide-react";
-import { Dialog } from "./components";
+import { LoaderCircle, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { IconButton } from "./components";
 import type { SessionUI } from "./use-session";
-// JunkDialog 用 AI 识别当前列表中的疑似垃圾邮件，用户勾选确认后才移到垃圾邮件。
+// JunkDialog 以右下角非模态面板识别疑似垃圾邮件，不遮挡其它操作；用户勾选确认后才移动。
 export function JunkDialog({
   ui,
   onClose,
@@ -35,8 +35,22 @@ export function JunkDialog({
     onClose();
   };
   return (
-    <Dialog title={t("AI 清理垃圾邮件")} onClose={close} wide>
-      <div className="invoice-content">
+    <section
+      className="junk-panel"
+      role="dialog"
+      aria-modal="false"
+      aria-label={t("AI 清理垃圾邮件")}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") close();
+      }}
+    >
+      <header>
+        <h2>{t("AI 清理垃圾邮件")}</h2>
+        <IconButton label={t("关闭")} onClick={close}>
+          <X />
+        </IconButton>
+      </header>
+      <div className="junk-body">
         {scan?.busy && (
           <div role="status" className="junk-progress">
             <p className="junk-status">
@@ -56,7 +70,7 @@ export function JunkDialog({
           </p>
         )}
         {candidates.length > 0 && (
-          <div className="invoice-table">
+          <div className="invoice-table junk-table">
             <label className="invoice-row junk-row header">
               <input
                 type="checkbox"
@@ -69,7 +83,6 @@ export function JunkDialog({
               />
               <span>{t("发件人")}</span>
               <span>{t("主题")}</span>
-              <span>{t("原因")}</span>
             </label>
             {candidates.map((c) => (
               <label
@@ -90,7 +103,7 @@ export function JunkDialog({
                 />
                 <span>{c.from.name || c.from.email}</span>
                 <span>{c.subject}</span>
-                <span className="muted">{c.reason}</span>
+                <span className="muted junk-reason">{c.reason}</span>
               </label>
             ))}
           </div>
@@ -118,6 +131,6 @@ export function JunkDialog({
           </button>
         </footer>
       </div>
-    </Dialog>
+    </section>
   );
 }

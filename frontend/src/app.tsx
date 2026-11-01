@@ -61,6 +61,8 @@ export function App() {
   const { state, run, error } = ui;
   const [mode, setMode] = useState("mail");
   const [dialog, setDialog] = useState("");
+  // 垃圾邮件面板非模态，独立于对话框状态，打开其它对话框时不会被关闭
+  const [junkPanel, setJunkPanel] = useState(false);
   const [timelineContact, setTimelineContact] =
     useState<ContactIdentity | null>(null);
   const [timelineBack, setTimelineBack] = useState("");
@@ -509,7 +511,7 @@ export function App() {
             onCompose={() => {
               void newCompose();
             }}
-            onJunk={() => setDialog("junk")}
+            onJunk={() => setJunkPanel(true)}
           />
           <div
             className="pane-resizer"
@@ -612,9 +614,7 @@ export function App() {
       {dialog === "folder" && (
         <FolderDialog ui={ui} onClose={() => setDialog("")} />
       )}
-      {dialog === "junk" && (
-        <JunkDialog ui={ui} onClose={() => setDialog("")} />
-      )}
+      {junkPanel && <JunkDialog ui={ui} onClose={() => setJunkPanel(false)} />}
       {dialog === "invoice" && (
         <InvoiceDialog ui={ui} onClose={() => setDialog("")} />
       )}

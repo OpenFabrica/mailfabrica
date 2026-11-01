@@ -212,3 +212,34 @@ func TestMarkAllReadBatchedAndImmediate(t *testing.T) {
 		}
 	}
 }
+
+// TestParseJunkTolerant 覆盖推理模型思考段、主题方括号、字符串编号、包裹对象与说明文字。
+func TestParseJunkTolerant(t *testing.T) {
+	items := make([]mail.Message, 3)
+	for i := range items {
+		items[i] = mail.Message{Key: mail.Key{Account: "a", Folder: "INBOX", UID: uint32(i + 1)}, Subject: fmt.Sprintf("s%d", i+1)}
+	}
+	cases := map[string][]string{
+		"<think>邮件 [1] 正常，[3] 是 [高] 告警</think>\n[{\"id\":2,\"reason\":\"钓鱼\"}]":   {"a/2/INBOX"},
+		"邮件[2]主题含【持续】[高]，判断如下：\n```json\n[{\"id\":\"3\",\"reason\":\"广告\"}]\n```": {"a/3/INBOX"},
+		"{\"spam\":[{\"id\":1,\"reason\":\"x\"},{\"id\":2,\"reason\":\"y\"}]}":    {"a/1/INBOX", "a/2/INBOX"},
+		"[{\"id\":1,\"reason\":\"x\"}]\n没有更多时输出 []":                               {"a/1/INBOX"},
+		"[]": {},
+	}
+	for text, want := range cases {
+		got, err := parseJunk(text, items)
+		if err != nil {
+			t.Fatalf("%q: %v", text, err)
+		}
+		keys := []string{}
+		for _, c := range got {
+			keys = append(keys, c.Key)
+		}
+		if strings.Join(keys, ",") != strings.Join(want, ",") {
+			t.Fatalf("%q: got %v want %v", text, keys, want)
+		}
+	}
+	if _, err := parseJunk("我无法判断这些邮件 [1]", items); err == nil || !strings.Contains(err.Error(), "我无法判断") {
+		t.Fatalf("error must include reply snippet: %v", err)
+	}
+}

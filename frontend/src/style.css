@@ -3125,9 +3125,59 @@ button svg {
   height: 14px;
 }
 
-/* AI 垃圾邮件识别结果沿用发票表格，增加原因列。 */
+/* AI 垃圾邮件面板固定在右下角，不加遮罩，列表与其它操作可继续使用。 */
+.junk-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 30;
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: 60dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.junk-panel > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.junk-panel > header h2 {
+  font-size: 13px;
+}
+.junk-body {
+  padding: 12px 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.junk-body .inline-error {
+  margin: 0;
+}
+.junk-body footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.junk-table {
+  margin: 0;
+  min-height: 0;
+}
 .junk-row {
-  grid-template-columns: 16px 1fr 2fr 1.6fr;
+  grid-template-columns: 16px 1fr 1.6fr;
+}
+.junk-row .junk-reason {
+  grid-column: 2 / -1;
+  margin-top: -6px;
 }
 .junk-progress {
   display: flex;

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -215,31 +216,95 @@ func junkPrompt(language string, batch []mail.Message) string {
 	return prompt.String()
 }
 
-// parseJunk 校验 AI 返回的编号；越界或重复编号被忽略，不信任模型输出的邮件键。
+// parseJunk 从模型回复中取出编号数组；越界或重复编号被忽略，不信任模型输出的邮件键。
 func parseJunk(text string, items []mail.Message) ([]JunkCandidate, error) {
-	// 模型可能包裹代码块或说明文字，只取最外层数组
-	start, end := strings.Index(text, "["), strings.LastIndex(text, "]")
-	if start < 0 || end < start {
-		return nil, fmt.Errorf("AI 未返回有效的识别结果")
-	}
-	var out []struct {
-		ID     int    `json:"id"`
-		Reason string `json:"reason"`
-	}
-	if err := json.Unmarshal([]byte(text[start:end+1]), &out); err != nil {
-		return nil, fmt.Errorf("AI 未返回有效的识别结果")
+	entries, ok := junkEntries(text)
+	if !ok {
+		return nil, fmt.Errorf("AI 未返回有效的识别结果：%s", clip(text, 80))
 	}
 	seen := map[int]bool{}
 	candidates := []JunkCandidate{}
-	for _, v := range out {
-		if v.ID < 1 || v.ID > len(items) || seen[v.ID] {
+	for _, v := range entries {
+		id := junkID(v["id"])
+		if id < 1 || id > len(items) || seen[id] {
 			continue
 		}
-		seen[v.ID] = true
-		m := items[v.ID-1]
-		candidates = append(candidates, JunkCandidate{Key: m.Key.String(), Subject: m.Subject, From: m.From, Date: m.Date, Reason: clip(v.Reason, 200)})
+		seen[id] = true
+		reason, _ := v["reason"].(string)
+		m := items[id-1]
+		candidates = append(candidates, JunkCandidate{Key: m.Key.String(), Subject: m.Subject, From: m.From, Date: m.Date, Reason: clip(reason, 200)})
 	}
 	return candidates, nil
+}
+
+// junkEntries 在回复中逐段尝试 JSON，返回最后一段符合格式的非空结果。
+// 推理模型会输出思考段，邮件主题也常带 [高] 这类方括号，不能简单截取首尾括号。
+func junkEntries(text string) ([]map[string]any, bool) {
+	if end := strings.LastIndex(text, "</think>"); end >= 0 {
+		text = text[end+len("</think>"):]
+	}
+	var found []map[string]any
+	ok := false
+	for i := 0; i < len(text); i++ {
+		if text[i] != '[' && text[i] != '{' {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(text[i:]))
+		var value any
+		if decoder.Decode(&value) != nil {
+			continue
+		}
+		// 优先采用最后一段非空结果，避免被说明文字里的 [] 覆盖
+		if entries, match := junkShape(value); match && (len(entries) > 0 || len(found) == 0) {
+			found, ok = entries, true
+		}
+		// 跳过已解析的整段，避免把数组里的单个对象当成完整结果
+		i += int(decoder.InputOffset()) - 1
+	}
+	return found, ok
+}
+
+// junkShape 接受对象数组、空数组，或把数组包在任意字段中的对象。
+func junkShape(value any) ([]map[string]any, bool) {
+	switch v := value.(type) {
+	case []any:
+		out := []map[string]any{}
+		for _, item := range v {
+			entry, ok := item.(map[string]any)
+			if !ok || junkID(entry["id"]) == 0 {
+				return nil, false
+			}
+			out = append(out, entry)
+		}
+		return out, true
+	case map[string]any:
+		if junkID(v["id"]) != 0 {
+			return []map[string]any{v}, true
+		}
+		for _, field := range v {
+			if entries, ok := junkShape(field); ok {
+				if _, isList := field.([]any); isList {
+					return entries, true
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+// junkID 兼容数字和数字字符串形式的编号，无效时返回 0。
+func junkID(value any) int {
+	switch v := value.(type) {
+	case float64:
+		if v == float64(int(v)) {
+			return int(v)
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // cleanJunk 将用户确认的候选移到各自账户的垃圾邮件文件夹。
