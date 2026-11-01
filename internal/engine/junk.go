@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	assist "github.com/openfabrica/mailfabrica/internal/ai"
@@ -22,13 +23,21 @@ type JunkCandidate struct {
 	Reason  string       `json:"reason"`
 }
 
-// JunkScan 记录一次 AI 垃圾邮件扫描的状态与候选，不写入邮件或索引。
+// JunkScan 记录一次 AI 垃圾邮件扫描的进度与候选，不写入邮件或索引。
 type JunkScan struct {
 	Busy       bool            `json:"busy"`
 	Scanned    int             `json:"scanned"`
+	Done       int             `json:"done"`
+	Current    string          `json:"current"`
 	Candidates []JunkCandidate `json:"candidates"`
 	Error      *string         `json:"error"`
 }
+
+// junkBatch 是每次 AI 调用的邮件数；分批让进度和结果能边识别边显示。
+const junkBatch = 10
+
+// junkWorkers 限制同时进行的 AI 请求，避免触发服务端限流。
+const junkWorkers = 3
 
 // clip 按字符截断并压平换行，限制发送给 AI 的单字段长度。
 func clip(text string, n int) string {
@@ -124,34 +133,68 @@ func (s *Session) scanJunk(p Params) (any, error) {
 	if str(s.prefs, "language") == "en" {
 		language = "Write reason in English."
 	}
-	var prompt strings.Builder
-	fmt.Fprintf(&prompt, "%s\n以下是 %d 封邮件的元数据，按编号逐封判断是否为垃圾邮件。\n", language, len(items))
-	for i, m := range items {
-		fmt.Fprintf(&prompt, "\n[%d]\n发件人：%s\n时间：%s\n主题：%s\n摘要：%s\n", i+1, clip(m.From.Display(), 200), time.Unix(m.Date, 0).Format(time.RFC3339), clip(m.Subject, 200), clip(m.Preview, 300))
-	}
+	assistConfig := assist.Config{Provider: str(config, "provider"), BaseURL: str(config, "effectiveUrl"), Model: str(config, "effectiveModel")}
 	result := &JunkScan{Busy: true, Scanned: len(items), Candidates: []JunkCandidate{}}
 	s.aiJunk = result
 	err = s.launch("ai:junk", func(ctx context.Context) (any, error) {
-		text, err := assist.ClassifyJunk(ctx, assist.Config{Provider: str(config, "provider"), BaseURL: str(config, "effectiveUrl"), Model: str(config, "effectiveModel")}, key, prompt.String())
-		var candidates []JunkCandidate
-		if err == nil {
-			candidates, err = parseJunk(text, items)
+		jobs := make(chan int)
+		var wg sync.WaitGroup
+		failed := 0
+		var firstErr error
+		for w := 0; w < junkWorkers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for start := range jobs {
+					batch := items[start:min(start+junkBatch, len(items))]
+					s.mu.Lock()
+					result.Current = batch[0].Subject
+					s.touch()
+					s.mu.Unlock()
+					text, err := assist.ClassifyJunk(ctx, assistConfig, key, junkPrompt(language, batch))
+					var found []JunkCandidate
+					if err == nil {
+						found, err = parseJunk(text, batch)
+					}
+					// 每批完成立即写回进度与候选，界面轮询即可看到
+					s.mu.Lock()
+					result.Done += len(batch)
+					result.Candidates = append(result.Candidates, found...)
+					if err != nil {
+						failed += len(batch)
+						if firstErr == nil {
+							firstErr = err
+						}
+					}
+					s.touch()
+					s.mu.Unlock()
+				}
+			}()
 		}
-		if err != nil {
-			s.mu.Lock()
+		for start := 0; start < len(items) && ctx.Err() == nil; start += junkBatch {
+			jobs <- start
+		}
+		close(jobs)
+		wg.Wait()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		result.Current = ""
+		// 全部失败才算任务失败；部分失败保留已识别结果并说明未识别封数
+		if failed == len(items) {
 			result.Busy = false
-			message := err.Error()
+			message := firstErr.Error()
 			result.Error = &message
-			s.mu.Unlock()
+			return nil, firstErr
 		}
-		return candidates, err
-	}, func(value any) error {
+		if failed > 0 {
+			message := fmt.Sprintf("%d 封邮件未能识别：%s", failed, firstErr.Error())
+			result.Error = &message
+		}
+		return nil, nil
+	}, func(any) error {
 		result.Busy = false
-		candidates, ok := value.([]JunkCandidate)
-		if !ok {
-			return fmt.Errorf("AI 识别结果无效")
-		}
-		result.Candidates = candidates
+		// 并发批次完成顺序不定，最终按时间从新到旧排列
+		sort.SliceStable(result.Candidates, func(i, j int) bool { return result.Candidates[i].Date > result.Candidates[j].Date })
 		return nil
 	})
 	if err != nil {
@@ -160,6 +203,16 @@ func (s *Session) scanJunk(p Params) (any, error) {
 		result.Error = &message
 	}
 	return result, err
+}
+
+// junkPrompt 生成单批邮件的元数据提示，编号从 1 开始，仅在本批内有效。
+func junkPrompt(language string, batch []mail.Message) string {
+	var prompt strings.Builder
+	fmt.Fprintf(&prompt, "%s\n以下是 %d 封邮件的元数据，按编号逐封判断是否为垃圾邮件。\n", language, len(batch))
+	for i, m := range batch {
+		fmt.Fprintf(&prompt, "\n[%d]\n发件人：%s\n时间：%s\n主题：%s\n摘要：%s\n", i+1, clip(m.From.Display(), 200), time.Unix(m.Date, 0).Format(time.RFC3339), clip(m.Subject, 200), clip(m.Preview, 300))
+	}
+	return prompt.String()
 }
 
 // parseJunk 校验 AI 返回的编号；越界或重复编号被忽略，不信任模型输出的邮件键。

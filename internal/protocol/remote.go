@@ -38,6 +38,7 @@ type Remote interface {
 	Fetch(context.Context, mail.Account, string, mail.Key) ([]byte, error)
 	Change(context.Context, mail.Account, string, mail.Key, string, any) error
 	SetFlags(context.Context, mail.Account, string, string, []uint32, string, bool) error
+	MoveMany(context.Context, mail.Account, string, string, []uint32, string) error
 	Create(context.Context, mail.Account, string, string) error
 	Append(context.Context, mail.Account, string, string, []byte, []string) error
 	Send(context.Context, mail.Account, string, mail.Outgoing) ([]byte, error)
@@ -360,6 +361,45 @@ func flagsOp(add bool) imap.StoreItem {
 	return imap.FormatFlagsOp(imap.RemoveFlags, true)
 }
 
+// moveSet 优先使用 MOVE；不支持时以 UIDPLUS 的 COPY + 指定 UID 删除代替。
+func moveSet(c *client.Client, set *imap.SeqSet, dest string) error {
+	move, _ := c.Support("MOVE")
+	plus, _ := c.Support("UIDPLUS")
+	if !move && !plus {
+		return fmt.Errorf("服务器不支持安全移动（需要 MOVE 或 UIDPLUS）")
+	}
+	if move {
+		return c.UidMove(set, dest)
+	}
+	if e := c.UidCopy(set, dest); e != nil {
+		return e
+	}
+	if e := c.UidStore(set, imap.FormatFlagsOp(imap.AddFlags, true), []interface{}{imap.DeletedFlag}, nil); e != nil {
+		return e
+	}
+	return uidExpunge(c, set)
+}
+
+// MoveMany 在一个连接内把同一文件夹的多封邮件移到目标文件夹，避免逐封登录。
+func (Network) MoveMany(ctx context.Context, a mail.Account, p, folder string, uids []uint32, dest string) error {
+	c, close, e := dialIMAP(ctx, a, p)
+	if e != nil {
+		return e
+	}
+	defer close()
+	if _, e = c.Select(folder, false); e != nil {
+		return e
+	}
+	for start := 0; start < len(uids); start += 500 {
+		set := new(imap.SeqSet)
+		set.AddNum(uids[start:min(start+500, len(uids))]...)
+		if e = moveSet(c, set, dest); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // SetFlags 在一个连接内对同一文件夹的多封邮件批量改标记，避免逐封登录。
 func (Network) SetFlags(ctx context.Context, a mail.Account, p, folder string, uids []uint32, op string, value bool) error {
 	flag, e := flagName(op)
@@ -403,21 +443,7 @@ func (Network) Change(ctx context.Context, a mail.Account, p string, k mail.Key,
 		if !ok {
 			return fmt.Errorf("移动目录无效")
 		}
-		move, _ := c.Support("MOVE")
-		plus, _ := c.Support("UIDPLUS")
-		if !move && !plus {
-			return fmt.Errorf("服务器不支持安全移动（需要 MOVE 或 UIDPLUS）")
-		}
-		if move {
-			return c.UidMove(set, dest)
-		}
-		if e = c.UidCopy(set, dest); e != nil {
-			return e
-		}
-		if e = c.UidStore(set, imap.FormatFlagsOp(imap.AddFlags, true), []interface{}{imap.DeletedFlag}, nil); e != nil {
-			return e
-		}
-		return uidExpunge(c, set)
+		return moveSet(c, set, dest)
 	}
 	if op == "delete" {
 		if ok, _ := c.Support("UIDPLUS"); !ok {

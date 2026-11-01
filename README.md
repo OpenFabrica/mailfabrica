@@ -51,7 +51,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 - Draft, polish, change tone, shorten, expand and translate message text.
 - Generate quick-reply suggestions, then accept or discard them.
 - Summarize a grouped conversation into a timeline, conclusions and action items, with source counts and visible errors.
-- Clean junk with AI: from the list menu, check the latest 100 messages in the current list using only sender, subject and preview. Suspected junk is listed with reasons and moves to the Junk folder only after you confirm.
+- Clean junk with AI: from the list menu, check the latest 100 messages in the current list using only sender, subject and preview. Progress and suspected junk appear while checking, and messages move to the Junk folder only after you confirm.
 - AI runs only on explicit user actions and does not automatically send mail. Relevant message text is sent to the configured service.
 
 ### Calendar and invoices

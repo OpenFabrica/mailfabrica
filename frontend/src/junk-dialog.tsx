@@ -20,10 +20,14 @@ export function JunkDialog({
     if (!started.current && !scan) void ui.run("ai.scanJunk", {});
     started.current = true;
   }, []);
-  // 候选变化后默认全选，避免遗漏新识别结果
+  // 边识别边出结果：新候选默认勾选，已取消勾选的保持不变
+  const known = useRef<string[]>([]);
   const candidateKeys = candidates.map((c) => c.key).join("\n");
   useEffect(() => {
-    setSelected(candidates.map((c) => c.key));
+    const keys = candidates.map((c) => c.key);
+    const added = keys.filter((k) => !known.current.includes(k));
+    known.current = keys;
+    setSelected((v) => [...v.filter((k) => keys.includes(k)), ...added]);
   }, [candidateKeys]);
   // 关闭时清掉结果，下次打开按当时的列表重新识别
   const close = () => {
@@ -34,10 +38,16 @@ export function JunkDialog({
     <Dialog title={t("AI 清理垃圾邮件")} onClose={close} wide>
       <div className="invoice-content">
         {scan?.busy && (
-          <p role="status" className="junk-status">
-            <LoaderCircle size={14} className="spin" />
-            {t("正在识别")} {scan.scanned} {t("封邮件…")}
-          </p>
+          <div role="status" className="junk-progress">
+            <p className="junk-status">
+              <LoaderCircle size={14} className="spin" />
+              {t("正在识别")} {scan.done} / {scan.scanned}
+              {candidates.length > 0 &&
+                ` · ${t("发现")} ${candidates.length} ${t("封垃圾邮件")}`}
+            </p>
+            <progress value={scan.done} max={Math.max(1, scan.scanned)} />
+            {scan.current && <p className="junk-current">{scan.current}</p>}
+          </div>
         )}
         {scan?.error && <p className="inline-error">{scan.error}</p>}
         {scan && !scan.busy && !scan.error && candidates.length === 0 && (
@@ -97,7 +107,11 @@ export function JunkDialog({
             className="primary"
             data-testid="junk.clean"
             disabled={!!scan?.busy || selected.length === 0}
-            onClick={() => void ui.run("ai.cleanJunk", { keys: selected })}
+            onClick={async () => {
+              // 移动交给后台执行，提交成功后直接关闭弹窗
+              const result = await ui.run("ai.cleanJunk", { keys: selected });
+              if (result !== undefined) close();
+            }}
           >
             <ShieldAlert size={14} />
             {t("移到垃圾邮件")} ({selected.length})

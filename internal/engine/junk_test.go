@@ -46,10 +46,10 @@ func TestAccountMarkAllRead(t *testing.T) {
 	}
 }
 
-// TestAIJunkScanAndClean 用本地 AI 接口验证只发送元数据、校验编号，并在确认后移到垃圾邮件。
+// TestAIJunkScanAndClean 用本地 AI 接口验证分批只发送元数据、校验编号、部分失败保留结果，并在确认后移到垃圾邮件。
 func TestAIJunkScanAndClean(t *testing.T) {
 	s := testSession(t)
-	prompts := make(chan string, 1)
+	prompts := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Messages []struct{ Role, Content string }
@@ -57,10 +57,17 @@ func TestAIJunkScanAndClean(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Error(err)
 		}
+		prompt := ""
 		for _, m := range payload.Messages {
 			if m.Role == "user" {
-				prompts <- m.Content
+				prompt = m.Content
+				prompts <- prompt
 			}
+		}
+		// 第二批只有 1 封，模拟这一批 AI 调用失败
+		if !strings.Contains(prompt, "[2]") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		// 代码块包裹、越界与重复编号都应被容忍或忽略
 		answer, _ := json.Marshal("```json\n[{\"id\":1,\"reason\":\"营销广告\"},{\"id\":99,\"reason\":\"越界\"},{\"id\":1,\"reason\":\"重复\"}]\n```")
@@ -69,13 +76,17 @@ func TestAIJunkScanAndClean(t *testing.T) {
 	defer server.Close()
 	executeTest(t, s, "ai.config", Params{"provider": "openai", "baseUrl": server.URL, "model": "test-only"})
 	executeTest(t, s, "ai.scanJunk", Params{"account": "demo-mailfabrica-dev"})
-	prompt := <-prompts
-	if !strings.Contains(prompt, "[11]") || strings.Contains(prompt, "[12]") || strings.Contains(prompt, "下一阶段规划") {
-		t.Fatal("prompt must list inbox metadata only")
+	first, second := <-prompts, <-prompts
+	if strings.Contains(first, "[2]") {
+		first, second = second, first
+	}
+	// 11 封分为 10 + 1 两批，编号只在批内有效
+	if !strings.Contains(second, "[10]") || strings.Contains(second, "[11]") || !strings.Contains(first, "[1]") || strings.Contains(first, "[2]") || strings.Contains(first+second, "下一阶段规划") {
+		t.Fatal("prompt must list inbox metadata in batches")
 	}
 	s.mu.Lock()
 	scan := s.aiJunk
-	if scan == nil || scan.Busy || scan.Error != nil || scan.Scanned != 11 || len(scan.Candidates) != 1 {
+	if scan == nil || scan.Busy || scan.Error == nil || !strings.HasPrefix(*scan.Error, "1 封邮件未能识别") || scan.Scanned != 11 || scan.Done != 11 || scan.Current != "" || len(scan.Candidates) != 1 {
 		s.mu.Unlock()
 		t.Fatalf("scan %+v", scan)
 	}
@@ -88,9 +99,17 @@ func TestAIJunkScanAndClean(t *testing.T) {
 	if _, err := s.Execute("ai.cleanJunk", marshalParams(Params{"keys": []any{"demo-mailfabrica-dev/2/INBOX"}})); err == nil {
 		t.Fatal("non-candidate moved")
 	}
+	remote := &flagRemote{Remote: s.remote, gate: make(chan struct{})}
+	close(remote.gate)
+	s.mu.Lock()
+	s.remote = remote
+	s.mu.Unlock()
 	executeTest(t, s, "ai.cleanJunk", Params{})
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if remote.batches != 1 || remote.singles != 0 {
+		t.Fatalf("move batches %d singles %d", remote.batches, remote.singles)
+	}
 	if len(s.aiJunk.Candidates) != 0 {
 		t.Fatal("moved candidate kept")
 	}
@@ -128,7 +147,15 @@ func (r *flagRemote) SetFlags(ctx context.Context, a mail.Account, p, folder str
 	return r.Remote.SetFlags(ctx, a, p, folder, uids, op, value)
 }
 
-// Change 记录逐封调用；批量标记不应走到这里。
+// MoveMany 记录一次批量移动并委托内存远端。
+func (r *flagRemote) MoveMany(ctx context.Context, a mail.Account, p, folder string, uids []uint32, dest string) error {
+	r.mu.Lock()
+	r.batches++
+	r.mu.Unlock()
+	return r.Remote.MoveMany(ctx, a, p, folder, uids, dest)
+}
+
+// Change 记录逐封调用；批量标记和移动不应走到这里。
 func (r *flagRemote) Change(ctx context.Context, a mail.Account, p string, k mail.Key, op string, value any) error {
 	r.mu.Lock()
 	r.singles++

@@ -291,10 +291,11 @@
   "晚上好": "Good evening",
   "AI 清理垃圾邮件": "Clean junk with AI",
   "正在识别": "Checking",
-  "封邮件…": "messages…",
   "已检查": "Checked",
   "封邮件，未发现垃圾邮件": "messages. No junk found.",
   "原因": "Reason",
   "重新识别": "Check again",
-  "移到垃圾邮件": "Move to junk"
+  "移到垃圾邮件": "Move to junk",
+  "发现": "found",
+  "封垃圾邮件": "junk"
 }

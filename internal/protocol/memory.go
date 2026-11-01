@@ -87,6 +87,16 @@ func (m *Memory) Fetch(ctx context.Context, _ mail.Account, _ string, k mail.Key
 	return append([]byte{}, raw...), nil
 }
 
+// MoveMany 模拟批量移动；任一邮件不存在时返回错误。
+func (m *Memory) MoveMany(ctx context.Context, a mail.Account, p, folder string, uids []uint32, dest string) error {
+	for _, uid := range uids {
+		if e := m.Change(ctx, a, p, mail.Key{Account: a.ID, Folder: folder, UID: uid}, "move", dest); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // SetFlags 模拟批量标记；任一邮件不存在时返回错误。
 func (m *Memory) SetFlags(ctx context.Context, a mail.Account, p, folder string, uids []uint32, op string, value bool) error {
 	for _, uid := range uids {

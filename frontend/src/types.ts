@@ -145,6 +145,8 @@ export interface Snapshot {
   aiJunk: {
     busy: boolean;
     scanned: number;
+    done: number;
+    current: string;
     candidates: {
       key: string;
       subject: string;

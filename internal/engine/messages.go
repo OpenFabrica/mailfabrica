@@ -311,20 +311,26 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 		accountIDs = append(accountIDs, id)
 	}
 	return nil, s.launch(fmt.Sprintf("message.mutate:%d", s.revision), func(ctx context.Context) (any, error) {
-		// 同一文件夹、同一标记的变更合并为一次连接和批量 STORE
+		// 同一文件夹的标记或移动合并为一次连接，避免逐封登录触发服务器限流
 		type batch struct {
 			account, folder, op string
 			value               bool
+			dest                string
 		}
 		batches := map[batch][]int{}
 		order := []batch{}
 		for i, a := range actions {
-			if a.Op != "seen" && a.Op != "flagged" {
+			b := batch{account: a.Key.Account, folder: a.Key.Folder, op: a.Op}
+			switch a.Op {
+			case "seen", "flagged":
+				b.value, _ = a.Value.(bool)
+			case "move":
+				b.dest, _ = a.Value.(string)
+			default:
+				// 永久删除较少见，仍逐封执行
 				actions[i].Err = s.remote.Change(ctx, accounts[a.Key.Account], secrets[a.Key.Account], a.Key, a.Op, a.Value)
 				continue
 			}
-			value, _ := a.Value.(bool)
-			b := batch{a.Key.Account, a.Key.Folder, a.Op, value}
 			if _, ok := batches[b]; !ok {
 				order = append(order, b)
 			}
@@ -335,7 +341,12 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 			for _, i := range batches[b] {
 				uids = append(uids, actions[i].Key.UID)
 			}
-			err := s.remote.SetFlags(ctx, accounts[b.account], secrets[b.account], b.folder, uids, b.op, b.value)
+			var err error
+			if b.op == "move" {
+				err = s.remote.MoveMany(ctx, accounts[b.account], secrets[b.account], b.folder, uids, b.dest)
+			} else {
+				err = s.remote.SetFlags(ctx, accounts[b.account], secrets[b.account], b.folder, uids, b.op, b.value)
+			}
 			for _, i := range batches[b] {
 				actions[i].Err = err
 			}
