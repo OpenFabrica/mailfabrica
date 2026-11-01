@@ -60,6 +60,12 @@ type Row struct {
 	Senders []string     `json:"senders"`
 }
 
+// Counts 是跨账户的全局计数，不随当前列表范围变化。
+type Counts struct {
+	Unread  int `json:"unread"`
+	Flagged int `json:"flagged"`
+}
+
 // View 是前端可读取的邮件列表状态。
 type View struct {
 	Scope    Scope          `json:"scope"`
@@ -144,6 +150,7 @@ type Session struct {
 	demo             bool
 	prefs            Params
 	view             View
+	counts           Counts
 	status           Status
 	commands         []Command
 	composes         map[uint64]*Compose
@@ -581,7 +588,7 @@ func (s *Session) Snapshot() json.RawMessage {
 	if s.view.Focused != nil {
 		current = s.messageResult(*s.view.Focused)
 	}
-	v := Params{"revision": s.revision, "accounts": s.Store.Accounts, "folders": s.Store.Folders, "view": s.view, "message": current, "composes": composes, "prefs": s.prefs, "status": s.status, "requests": s.requests, "aiReply": s.aiReply, "aiGroupSummary": s.aiGroupSummary, "calendar": s.calendar, "invoice": s.invoice, "update": s.update, "demo": s.demo}
+	v := Params{"revision": s.revision, "accounts": s.Store.Accounts, "folders": s.Store.Folders, "view": s.view, "counts": s.counts, "message": current, "composes": composes, "prefs": s.prefs, "status": s.status, "requests": s.requests, "aiReply": s.aiReply, "aiGroupSummary": s.aiGroupSummary, "calendar": s.calendar, "invoice": s.invoice, "update": s.update, "demo": s.demo}
 	b, _ := json.Marshal(v)
 	return b
 }
@@ -644,6 +651,7 @@ func (s *Session) refresh() error {
 		return e
 	}
 	s.view.Messages = []mail.Message{}
+	s.counts = Counts{}
 	q := strings.ToLower(s.view.Query)
 	for _, m := range all {
 		scope := s.view.Scope
@@ -652,6 +660,13 @@ func (s *Session) refresh() error {
 			if f.Path == m.Key.Folder {
 				role = f.Role
 			}
+		}
+		// 全局计数与「未读邮件」「红旗邮件」范围使用同一规则
+		if !m.Flags.Seen && role != "junk" && role != "trash" {
+			s.counts.Unread++
+		}
+		if m.Flags.Flagged {
+			s.counts.Flagged++
 		}
 		include := false
 		switch scope.Kind {

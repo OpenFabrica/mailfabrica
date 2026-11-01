@@ -114,6 +114,15 @@ export interface Snapshot {
     focused: string | null;
     group: string | null;
   };
+  // 跨账户全局计数，不随当前列表范围变化
+  counts: { unread: number; flagged: number };
+  // 已显式加载的系统日历数据；events 为 null 表示尚未加载
+  calendar: {
+    supported: boolean;
+    since: string;
+    until: string;
+    events: CalendarEvent[] | null;
+  };
   message: { meta: Message; body?: Body; state: string; error?: string } | null;
   composes: Compose[];
   prefs: Record<string, string | number | boolean | string[]>;

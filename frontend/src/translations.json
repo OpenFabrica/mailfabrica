@@ -128,7 +128,6 @@
   "正在处理…": "Working…",
   "远程图片已关闭": "Remote images are disabled",
   "封相关邮件": "messages in this conversation",
-  "选择一封邮件": "Select a message",
   "阅读窗格": "Reading pane",
   "上一封": "Previous message",
   "下一封": "Next message",
@@ -281,5 +280,13 @@
   "已阻止不安全链接": "Unsafe link blocked",
   "无法打开链接": "Could not open the link",
   "链接文字无效": "Invalid link text",
-  "未找到唯一匹配的邮件链接": "No unique matching message link"
+  "未找到唯一匹配的邮件链接": "No unique matching message link",
+  "搜索": "Search",
+  "同步": "Sync",
+  "切换邮件": "Switch message",
+  "夜深了": "Good evening",
+  "早上好": "Good morning",
+  "中午好": "Good afternoon",
+  "下午好": "Good afternoon",
+  "晚上好": "Good evening"
 }

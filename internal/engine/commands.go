@@ -85,6 +85,10 @@ func (s *Session) dispatch(id string, p Params) (any, error) {
 			return nil, e
 		}
 		s.prefs = next
+		// 列表行只受 groupBySubject 影响；宽度、折叠等偏好不必重算全部邮件，避免拖动边栏后卡顿
+		if _, ok := p["groupBySubject"]; !ok {
+			return s.prefs, nil
+		}
 		return s.prefs, s.refresh()
 	case "app.dialog":
 		name, e := required(p, "name")

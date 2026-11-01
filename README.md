@@ -23,6 +23,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 - Compact two-line rows, multiple selection, read/unread flags, follow-up flags, moving, deletion, junk actions and marking a folder as read.
 - Subject-based conversation grouping, an overview and dedicated previous/next navigation within a group.
 - HTML and plain-text reading, tables, inline CID images and attachment saving.
+- With no message selected, the reading pane shows a welcome page: greeting and date, unread/flagged/today's events, shortcuts to common views and keyboard hints.
 - MIME encoded-word decoding for subjects and address names, including existing cached messages.
 - Fixed message headers and quick-reply controls with an independently scrolling body; menus dismiss on outside clicks.
 - Validated HTTP, HTTPS and mailto links open through system applications, including static unsubscribe links.

@@ -236,3 +236,29 @@ func TestReplyQuotePreview(t *testing.T) {
 		t.Fatal("plain quote lost whitespace or escaping")
 	}
 }
+
+// TestGlobalCounts 验证全局未读/红旗计数不随列表范围变化，并随标记更新。
+func TestGlobalCounts(t *testing.T) {
+	s := testSession(t)
+	counts := func() Counts {
+		t.Helper()
+		var state struct{ Counts Counts }
+		if err := json.Unmarshal(s.Snapshot(), &state); err != nil {
+			t.Fatal(err)
+		}
+		return state.Counts
+	}
+	if c := counts(); c.Unread != 5 || c.Flagged != 1 {
+		t.Fatalf("initial counts %+v", c)
+	}
+	executeTest(t, s, "view.scope", Params{"kind": "flagged"})
+	if c := counts(); c.Unread != 5 || c.Flagged != 1 {
+		t.Fatalf("counts changed with scope %+v", c)
+	}
+	executeTest(t, s, "view.scope", Params{"kind": "allInboxes"})
+	executeTest(t, s, "view.select", Params{"key": "demo-mailfabrica-dev/1/INBOX"})
+	executeTest(t, s, "message.flag", Params{"flagged": true})
+	if c := counts(); c.Unread != 4 || c.Flagged != 2 {
+		t.Fatalf("counts after read and flag %+v", c)
+	}
+}

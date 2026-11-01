@@ -8,6 +8,7 @@ Go MIME 解析器产生纯文本、HTML 和附件视图。界面使用 Wails 的
 - 可通过阅读菜单切换 HTML/纯文本；下载和解析错误可见，可重试。
 - 文本选择、复制和滚动由 WebView 提供；固定自动化入口见[控制协议](control-protocol.md)。
 - 界面三栏直接铺满客户区。邮件默认 48px 双行列表，摘要默认隐藏；列表菜单可切换紧凑模式，按主题归类仍然保留。
+- 未选择邮件时阅读区显示欢迎页（`reader-landing.tsx`，`data-testid=reader.landing`）。未读和红旗数来自快照 `counts`，与“未读邮件”“红旗邮件”范围规则相同，不随当前列表变化；今日日程只使用已显式加载的系统日历数据，不主动请求日历权限。入口的 `data-testid` 为 `landing.compose/unread/flagged/calendar/contacts/search`。进场动画在系统开启“减少动态效果”时不播放。
 
 `ui.screenshot` 只导出应用 DOM，不包含 iframe；正文排版必须用实际浏览器或窗口图像验证。
 

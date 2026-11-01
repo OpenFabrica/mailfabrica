@@ -9,7 +9,6 @@ import {
   History,
   Inbox,
   LoaderCircle,
-  Mail,
   MoreHorizontal,
   Paperclip,
   Reply,
@@ -25,6 +24,7 @@ import { IconButton, dateLabel } from "./components";
 import { EmailContent, useEmailTheme } from "./email-content";
 import type { ContactIdentity } from "./contact-timeline";
 import { useDismiss } from "./use-dismiss";
+import { ReaderLanding, type LandingActions } from "./reader-landing";
 import { keyString, type Row } from "./types";
 import {
   ConversationSummary,
@@ -257,10 +257,12 @@ export function Reader({
   ui,
   onCompose,
   onContact,
+  landing,
 }: {
   ui: SessionUI;
   onCompose: (id?: number) => void;
   onContact: (contact: ContactIdentity) => void;
+  landing: LandingActions;
 }) {
   const { state, run } = ui;
   const [reply, setReply] = useState("");
@@ -348,15 +350,7 @@ export function Reader({
       </section>
     );
   }
-  if (!state.message)
-    return (
-      <section className="reader reader-empty">
-        <div>
-          <Mail size={42} strokeWidth={1} />
-          <h2>{en ? "Select a message" : t("选择一封邮件")}</h2>
-        </div>
-      </section>
-    );
+  if (!state.message) return <ReaderLanding ui={ui} actions={landing} />;
   const meta = state.message.meta;
   if (!meta) return null;
   const create = async (command: string) => {

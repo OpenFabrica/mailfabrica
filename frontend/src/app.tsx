@@ -235,26 +235,40 @@ export function App() {
     );
     const target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
+    // 限制宽度范围；Retina/触控板的 clientX 可能是小数，引擎只接受整数像素，所以取整
+    const width = (event: PointerEvent) =>
+      Math.round(
+        Math.max(
+          index === 0 ? 170 : 280,
+          Math.min(index === 0 ? 320 : 560, initial + event.clientX - start),
+        ),
+      );
+    // 宽度变量必须写在 .app 上：它的内联样式会遮住 documentElement 上的同名变量
+    const app = target.closest<HTMLElement>(".app");
+    const property = index === 0 ? "--sidebar-width" : "--list-width";
+    const apply = (value: number) =>
+      app?.style.setProperty(property, `${value}px`);
+    // 每帧最多重排一次，避免高频 pointermove 让整页反复布局
+    let frame = 0;
+    let pending = initial;
     const move = (event: PointerEvent) => {
-      const value = Math.max(
-        index === 0 ? 170 : 280,
-        Math.min(index === 0 ? 320 : 560, initial + event.clientX - start),
-      );
-      document.documentElement.style.setProperty(
-        index === 0 ? "--sidebar-width" : "--list-width",
-        `${value}px`,
-      );
+      pending = width(event);
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          apply(pending);
+        });
     };
     const up = (event: PointerEvent) => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
-      const value = Math.max(
-        index === 0 ? 170 : 280,
-        Math.min(index === 0 ? 320 : 560, initial + event.clientX - start),
-      );
+      cancelAnimationFrame(frame);
+      const value = width(event);
+      apply(value);
+      // 保存失败时恢复原宽度，避免界面和偏好不一致
       void run("app.prefs", {
         [index === 0 ? "sidebarWidth" : "listWidth"]: value,
-      });
+      }).then((saved) => saved === undefined && apply(initial));
     };
     target.addEventListener("pointermove", move);
     target.addEventListener("pointerup", up);
@@ -372,9 +386,10 @@ export function App() {
               ].map(([kind, label, Icon]) => {
                 const K = kind as string;
                 const Component = Icon as typeof Mail;
+                // 未读角标用引擎的全局计数，不随当前列表范围变化
                 const count =
                   K === "unread"
-                    ? state.view.messages.filter((m) => !m.flags.seen).length
+                    ? state.counts.unread
                     : K === "allInboxes"
                       ? Object.values(state.folders)
                           .flat()
@@ -489,6 +504,13 @@ export function App() {
             ui={ui}
             onCompose={openCompose}
             onContact={(contact) => showTimeline(contact)}
+            landing={{
+              onCompose: () => void newCompose(),
+              onScope: (kind) => switchScope({ kind }),
+              onCalendar: () => setMode("calendar"),
+              onContacts: () => setDialog("contacts"),
+              onSearch: () => queryInput.current?.focus(),
+            }}
           />
         </div>
       ) : (
