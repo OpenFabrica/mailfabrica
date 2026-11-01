@@ -68,7 +68,7 @@ UI 与引擎变更均需验证可观察结果。原生 WebView 的 DOM 截图不
 
 ## 账户一键已读与 AI 垃圾邮件清理
 
-`account.markAllRead {id}` 将该账户全部文件夹的未读邮件标为已读，不受当前列表范围影响；与 `folder.markAllRead` 共用 `markAllRead`，最终经 `message.markRead` 写回服务器。
+`account.markAllRead {id}` 将该账户全部文件夹的未读邮件标为已读，不受当前列表范围影响；与 `folder.markAllRead` 共用 `markAllRead`，最终经 `message.markRead` 写回服务器。已读和红旗先写本地索引并刷新视图；后台按账户 + 文件夹 + 标记合并为一次 IMAP 连接和分段 `UID STORE`（`Remote.SetFlags`），不逐封登录。服务器失败时回滚本地标记，相同错误去重后只提示失败封数和至多 3 条原因。
 
 `ai.scanJunk {account?, folder?, limit?}` 默认检查当前列表，指定账户时检查其文件夹（默认收件箱）。跳过垃圾邮件、已删除、已发送和草稿，按时间取最近 `limit` 封（默认 100，最多 200）。只发送发件人、时间、主题和截断后的预览，不下载正文或附件。模型只返回编号数组，越界和重复编号被忽略，不信任模型给出的邮件键。
 

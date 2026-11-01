@@ -1,14 +1,19 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/openfabrica/mailfabrica/internal/mail"
+	"github.com/openfabrica/mailfabrica/internal/protocol"
 )
 
 // TestAccountMarkAllRead 验证按账户一键已读覆盖全部文件夹，且不依赖当前列表范围。
@@ -98,5 +103,85 @@ func TestAIJunkScanAndClean(t *testing.T) {
 	}
 	if len(junk.Messages) != 1 {
 		t.Fatalf("junk %d", len(junk.Messages))
+	}
+}
+
+// flagRemote 统计批量与逐封调用，可阻塞或注入失败以观察本地即时状态。
+type flagRemote struct {
+	protocol.Remote
+	mu       sync.Mutex
+	batches  int
+	singles  int
+	gate     chan struct{}
+	failWith error
+}
+
+// SetFlags 记录一次批量调用，等待放行后返回注入错误或委托内存远端。
+func (r *flagRemote) SetFlags(ctx context.Context, a mail.Account, p, folder string, uids []uint32, op string, value bool) error {
+	r.mu.Lock()
+	r.batches++
+	r.mu.Unlock()
+	<-r.gate
+	if r.failWith != nil {
+		return r.failWith
+	}
+	return r.Remote.SetFlags(ctx, a, p, folder, uids, op, value)
+}
+
+// Change 记录逐封调用；批量标记不应走到这里。
+func (r *flagRemote) Change(ctx context.Context, a mail.Account, p string, k mail.Key, op string, value any) error {
+	r.mu.Lock()
+	r.singles++
+	r.mu.Unlock()
+	return r.Remote.Change(ctx, a, p, k, op, value)
+}
+
+// TestMarkAllReadBatchedAndImmediate 验证一键已读立即更新本地、每文件夹只登录一次，失败时回滚且错误不重复堆叠。
+func TestMarkAllReadBatchedAndImmediate(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		s := testSession(t)
+		remote := &flagRemote{Remote: s.remote, gate: make(chan struct{})}
+		if fail {
+			remote.failWith = errors.New("IMAP 登录失败: Too many login attempts")
+		}
+		s.mu.Lock()
+		s.remote = remote
+		before := s.counts.Unread
+		s.mu.Unlock()
+		if _, err := s.Execute("account.markAllRead", marshalParams(Params{"id": "demo-mailfabrica-dev"})); err != nil {
+			t.Fatal(err)
+		}
+		// 服务器尚未返回时，本地已显示为已读，界面不必等待网络
+		s.mu.Lock()
+		immediate := s.counts.Unread
+		s.mu.Unlock()
+		close(remote.gate)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		if immediate != 0 {
+			t.Fatalf("local unread before server reply %d", immediate)
+		}
+		s.mu.Lock()
+		after, errs := s.counts.Unread, s.status.Errors
+		s.mu.Unlock()
+		if remote.batches != 1 || remote.singles != 0 {
+			t.Fatalf("batches %d singles %d", remote.batches, remote.singles)
+		}
+		if !fail {
+			if after != 0 {
+				t.Fatalf("unread %d", after)
+			}
+			continue
+		}
+		if after != before {
+			t.Fatalf("failed change not rolled back: %d != %d", after, before)
+		}
+		last := errs[len(errs)-1][1]
+		if !strings.HasPrefix(last, fmt.Sprintf("%d 封邮件操作失败", before)) || strings.Count(last, "Too many") != 1 {
+			t.Fatalf("error %q", last)
+		}
 	}
 }

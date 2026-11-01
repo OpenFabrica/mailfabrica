@@ -219,21 +219,39 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 	actions := []mutation{}
 	accounts := map[string]mail.Account{}
 	secrets := map[string]string{}
+	// 每个文件夹只建一次 UID 索引，避免批量操作时逐封线性查找
+	folders := map[string]map[uint32]mail.Flags{}
 	for _, k := range keys {
-		m, err := s.findMeta(k)
-		if err != nil {
-			return nil, err
+		folderKey := k.Account + "\x00" + k.Folder
+		flagsByUID, ok := folders[folderKey]
+		if !ok {
+			idx, err := s.Store.Index(k.Account, k.Folder)
+			if err != nil {
+				return nil, err
+			}
+			flagsByUID = make(map[uint32]mail.Flags, len(idx.Messages))
+			for _, m := range idx.Messages {
+				flagsByUID[m.Key.UID] = m.Flags
+			}
+			folders[folderKey] = flagsByUID
 		}
-		a, err := s.account(k.Account)
-		if err != nil {
-			return nil, err
+		flags, ok := flagsByUID[k.UID]
+		if !ok {
+			return nil, fmt.Errorf("邮件不存在")
 		}
-		accounts[a.ID] = a
-		password, err := s.secrets.Get(a.ID)
-		if err != nil {
-			return nil, err
+		// 凭据每个账户只读一次；钥匙串访问较慢且在会话锁内
+		if _, ok := accounts[k.Account]; !ok {
+			a, err := s.account(k.Account)
+			if err != nil {
+				return nil, err
+			}
+			password, err := s.secrets.Get(a.ID)
+			if err != nil {
+				return nil, err
+			}
+			accounts[a.ID] = a
+			secrets[a.ID] = password
 		}
-		secrets[a.ID] = password
 		op := ""
 		var value any
 		switch id {
@@ -242,10 +260,10 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 			value = boolean(p, "read", true)
 		case "message.toggleRead":
 			op = "seen"
-			value = !m.Flags.Seen
+			value = !flags.Seen
 		case "message.flag":
 			op = "flagged"
-			value = boolean(p, "flagged", !m.Flags.Flagged)
+			value = boolean(p, "flagged", !flags.Flagged)
 		case "message.move":
 			op = "move"
 			value, e = required(p, "folder")
@@ -272,7 +290,7 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 		default:
 			return nil, fmt.Errorf("未知邮件操作")
 		}
-		if op == "seen" && value == m.Flags.Seen || op == "flagged" && value == m.Flags.Flagged {
+		if op == "seen" && value == flags.Seen || op == "flagged" && value == flags.Flagged {
 			continue
 		}
 		actions = append(actions, mutation{Key: k, Op: op, Value: value})
@@ -280,14 +298,47 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 	if len(actions) == 0 {
 		return nil, nil
 	}
+	// 已读和红旗先写本地并刷新视图，界面立即响应；服务器在后台同步，失败时回滚
+	if changed, e := s.applyFlags(actions, false); e != nil {
+		return nil, e
+	} else if changed {
+		if e = s.refresh(); e != nil {
+			return nil, e
+		}
+	}
 	accountIDs := []string{}
 	for id := range accounts {
 		accountIDs = append(accountIDs, id)
 	}
 	return nil, s.launch(fmt.Sprintf("message.mutate:%d", s.revision), func(ctx context.Context) (any, error) {
-		for i := range actions {
-			a := actions[i]
-			actions[i].Err = s.remote.Change(ctx, accounts[a.Key.Account], secrets[a.Key.Account], a.Key, a.Op, a.Value)
+		// 同一文件夹、同一标记的变更合并为一次连接和批量 STORE
+		type batch struct {
+			account, folder, op string
+			value               bool
+		}
+		batches := map[batch][]int{}
+		order := []batch{}
+		for i, a := range actions {
+			if a.Op != "seen" && a.Op != "flagged" {
+				actions[i].Err = s.remote.Change(ctx, accounts[a.Key.Account], secrets[a.Key.Account], a.Key, a.Op, a.Value)
+				continue
+			}
+			value, _ := a.Value.(bool)
+			b := batch{a.Key.Account, a.Key.Folder, a.Op, value}
+			if _, ok := batches[b]; !ok {
+				order = append(order, b)
+			}
+			batches[b] = append(batches[b], i)
+		}
+		for _, b := range order {
+			uids := make([]uint32, 0, len(batches[b]))
+			for _, i := range batches[b] {
+				uids = append(uids, actions[i].Key.UID)
+			}
+			err := s.remote.SetFlags(ctx, accounts[b.account], secrets[b.account], b.folder, uids, b.op, b.value)
+			for _, i := range batches[b] {
+				actions[i].Err = err
+			}
 		}
 		return actions, nil
 	}, func(v any) error {
@@ -295,49 +346,71 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 		if !ok {
 			return fmt.Errorf("变更结果无效")
 		}
-		failures := []string{}
-		affected := map[string]mail.Key{}
+		failed := 0
+		reasons := []string{}
+		seenReason := map[string]bool{}
+		confirmed := []mutation{}
+		reverted := []mutation{}
+		removed := map[string]map[uint32]bool{}
 		for _, a := range results {
 			if a.Err != nil {
-				failures = append(failures, a.Err.Error())
+				// 批量失败通常是同一原因，去重后再提示，避免错误文本无限变长
+				failed++
+				if reason := a.Err.Error(); !seenReason[reason] && len(reasons) < 3 {
+					seenReason[reason] = true
+					reasons = append(reasons, reason)
+				}
+				if a.Op == "seen" || a.Op == "flagged" {
+					reverted = append(reverted, a)
+				}
 				continue
 			}
-			idx, err := s.Store.Index(a.Key.Account, a.Key.Folder)
-			if err != nil {
-				return err
+			if a.Op == "seen" || a.Op == "flagged" {
+				confirmed = append(confirmed, a)
 			}
-			for i, m := range idx.Messages {
-				if m.Key != a.Key {
-					continue
+			if a.Op == "move" || a.Op == "delete" {
+				folderKey := a.Key.Account + "\x00" + a.Key.Folder
+				if removed[folderKey] == nil {
+					removed[folderKey] = map[uint32]bool{}
 				}
-				switch a.Op {
-				case "seen":
-					idx.Messages[i].Flags.Seen, _ = a.Value.(bool)
-				case "flagged":
-					idx.Messages[i].Flags.Flagged, _ = a.Value.(bool)
-				case "move", "delete":
-					idx.Messages = append(idx.Messages[:i], idx.Messages[i+1:]...)
-					delete(s.bodies, a.Key.String())
-					if err = s.Store.RemoveRaw(a.Key); err != nil {
-						return err
-					}
+				removed[folderKey][a.Key.UID] = true
+				delete(s.bodies, a.Key.String())
+				if err := s.Store.RemoveRaw(a.Key); err != nil {
+					return err
 				}
-				break
-			}
-			affected[a.Key.Account+"\x00"+a.Key.Folder] = a.Key
-		}
-		for _, k := range affected {
-			if err := s.Store.SaveIndex(k.Account, k.Folder); err != nil {
-				return err
 			}
 		}
-		if err := s.refresh(); err != nil {
+		// 再写一次成功结果，防止期间完成的同步用旧标记覆盖本地
+		applied, err := s.applyFlags(confirmed, false)
+		if err != nil {
+			return err
+		}
+		undone, err := s.applyFlags(reverted, true)
+		if err != nil {
 			return err
 		}
 		changedAccounts := map[string]bool{}
-		for _, a := range results {
-			if a.Err == nil && (a.Op == "move" || a.Op == "delete") {
-				changedAccounts[a.Key.Account] = true
+		for folderKey, uids := range removed {
+			account, folder, _ := strings.Cut(folderKey, "\x00")
+			idx, err := s.Store.Index(account, folder)
+			if err != nil {
+				return err
+			}
+			kept := idx.Messages[:0]
+			for _, m := range idx.Messages {
+				if !uids[m.Key.UID] {
+					kept = append(kept, m)
+				}
+			}
+			idx.Messages = kept
+			if err = s.Store.SaveIndex(account, folder); err != nil {
+				return err
+			}
+			changedAccounts[account] = true
+		}
+		if applied || undone || len(removed) > 0 {
+			if err := s.refresh(); err != nil {
+				return err
 			}
 		}
 		for account := range changedAccounts {
@@ -345,11 +418,55 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 				return err
 			}
 		}
-		if len(failures) > 0 {
-			return fmt.Errorf("部分邮件操作失败: %s", strings.Join(failures, "; "))
+		if failed > 0 {
+			return fmt.Errorf("%d 封邮件操作失败: %s", failed, strings.Join(reasons, "; "))
 		}
 		return nil
 	}, accountIDs...)
+}
+
+// applyFlags 将已读/红旗变更写入本地索引，revert 为真时恢复原值；返回是否写入，由调用方刷新视图。
+func (s *Session) applyFlags(actions []mutation, revert bool) (bool, error) {
+	byFolder := map[string]map[uint32]mutation{}
+	for _, a := range actions {
+		if a.Op != "seen" && a.Op != "flagged" {
+			continue
+		}
+		folderKey := a.Key.Account + "\x00" + a.Key.Folder
+		if byFolder[folderKey] == nil {
+			byFolder[folderKey] = map[uint32]mutation{}
+		}
+		byFolder[folderKey][a.Key.UID] = a
+	}
+	if len(byFolder) == 0 {
+		return false, nil
+	}
+	for folderKey, changes := range byFolder {
+		account, folder, _ := strings.Cut(folderKey, "\x00")
+		idx, err := s.Store.Index(account, folder)
+		if err != nil {
+			return false, err
+		}
+		for i, m := range idx.Messages {
+			a, ok := changes[m.Key.UID]
+			if !ok {
+				continue
+			}
+			value, _ := a.Value.(bool)
+			if revert {
+				value = !value
+			}
+			if a.Op == "seen" {
+				idx.Messages[i].Flags.Seen = value
+			} else {
+				idx.Messages[i].Flags.Flagged = value
+			}
+		}
+		if err = s.Store.SaveIndex(account, folder); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // loadBody 获取用于回复/转发的本地 MIME 正文。

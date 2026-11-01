@@ -1405,8 +1405,14 @@ button svg {
   position: fixed;
   bottom: 4px;
   left: 25px;
+  max-width: calc(100vw - 50px);
   font-size: 10px;
   color: #c66;
+  /* 超长错误只显示一行，不覆盖界面 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 .loading-screen {
   height: 100dvh;
@@ -3129,4 +3135,11 @@ button svg {
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* 错误提示限制高度，长文本在提示内滚动 */
+.error-toast span {
+  max-height: 4.8em;
+  overflow: auto;
+  overflow-wrap: anywhere;
 }

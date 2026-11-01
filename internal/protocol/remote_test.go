@@ -55,6 +55,10 @@ func TestNetworkIMAPRoundTrip(t *testing.T) {
 	if e = remote.Change(ctx, a, "password", key, "flagged", true); e != nil {
 		t.Fatal(e)
 	}
+	// 批量标记走同一个连接内的 UID STORE
+	if e = remote.SetFlags(ctx, a, "password", "INBOX", []uint32{key.UID}, "seen", true); e != nil {
+		t.Fatal(e)
+	}
 	if e = remote.Create(ctx, a, "password", "工作/草稿"); e != nil {
 		t.Fatal(e)
 	}
@@ -70,16 +74,17 @@ func TestNetworkIMAPRoundTrip(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	found, flagged := false, false
+	found, flagged, seen := false, false, false
 	for _, f := range folders {
 		if f.Folder.Path == "工作/草稿" && len(f.Messages) == 1 && f.Messages[0].Subject == "中文草稿" {
 			found = true
 		}
 		if f.Folder.Path == "INBOX" {
 			flagged = f.Messages[0].Flags.Flagged
+			seen = f.Messages[0].Flags.Seen
 		}
 	}
-	if !found || !flagged {
+	if !found || !flagged || !seen {
 		t.Fatalf("folder/flag missing: %+v", folders)
 	}
 }

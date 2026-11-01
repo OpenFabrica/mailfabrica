@@ -37,6 +37,7 @@ type Remote interface {
 	Sync(context.Context, mail.Account, string, uint32, uint32, ...map[string]KnownFolder) ([]FolderResult, error)
 	Fetch(context.Context, mail.Account, string, mail.Key) ([]byte, error)
 	Change(context.Context, mail.Account, string, mail.Key, string, any) error
+	SetFlags(context.Context, mail.Account, string, string, []uint32, string, bool) error
 	Create(context.Context, mail.Account, string, string) error
 	Append(context.Context, mail.Account, string, string, []byte, []string) error
 	Send(context.Context, mail.Account, string, mail.Outgoing) ([]byte, error)
@@ -338,6 +339,53 @@ func (Network) Fetch(ctx context.Context, a mail.Account, p string, k mail.Key) 
 	return fetch(c, k.UID)
 }
 
+// flagName 将命令中的标记名映射为 IMAP 系统标记。
+func flagName(op string) (string, error) {
+	switch op {
+	case "seen":
+		return imap.SeenFlag, nil
+	case "flagged":
+		return imap.FlaggedFlag, nil
+	case "answered":
+		return imap.AnsweredFlag, nil
+	}
+	return "", fmt.Errorf("未知标记")
+}
+
+// flagsOp 返回静默增加或移除标记的 STORE 操作。
+func flagsOp(add bool) imap.StoreItem {
+	if add {
+		return imap.FormatFlagsOp(imap.AddFlags, true)
+	}
+	return imap.FormatFlagsOp(imap.RemoveFlags, true)
+}
+
+// SetFlags 在一个连接内对同一文件夹的多封邮件批量改标记，避免逐封登录。
+func (Network) SetFlags(ctx context.Context, a mail.Account, p, folder string, uids []uint32, op string, value bool) error {
+	flag, e := flagName(op)
+	if e != nil {
+		return e
+	}
+	c, close, e := dialIMAP(ctx, a, p)
+	if e != nil {
+		return e
+	}
+	defer close()
+	if _, e = c.Select(folder, false); e != nil {
+		return e
+	}
+	// 分段发送，避免 UID 不连续时命令行过长
+	for start := 0; start < len(uids); start += 500 {
+		end := min(start+500, len(uids))
+		set := new(imap.SeqSet)
+		set.AddNum(uids[start:end]...)
+		if e = c.UidStore(set, flagsOp(value), []interface{}{flag}, nil); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // Change 执行标记、移动或永久删除；不使用会删除其他邮件的全局 EXPUNGE 回退。
 func (Network) Change(ctx context.Context, a mail.Account, p string, k mail.Key, op string, value any) error {
 	c, close, e := dialIMAP(ctx, a, p)
@@ -384,22 +432,11 @@ func (Network) Change(ctx context.Context, a mail.Account, p string, k mail.Key,
 	if !ok {
 		return fmt.Errorf("标记值无效")
 	}
-	flag := ""
-	switch op {
-	case "seen":
-		flag = imap.SeenFlag
-	case "flagged":
-		flag = imap.FlaggedFlag
-	case "answered":
-		flag = imap.AnsweredFlag
-	default:
-		return fmt.Errorf("未知标记")
+	flag, e := flagName(op)
+	if e != nil {
+		return e
 	}
-	var kind imap.FlagsOp = imap.RemoveFlags
-	if v {
-		kind = imap.AddFlags
-	}
-	return c.UidStore(set, imap.FormatFlagsOp(kind, true), []interface{}{flag}, nil)
+	return c.UidStore(set, flagsOp(v), []interface{}{flag}, nil)
 }
 
 // uidExpunge 将删除范围限定为当前请求的 UID。

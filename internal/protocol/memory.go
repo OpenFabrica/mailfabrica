@@ -87,6 +87,16 @@ func (m *Memory) Fetch(ctx context.Context, _ mail.Account, _ string, k mail.Key
 	return append([]byte{}, raw...), nil
 }
 
+// SetFlags 模拟批量标记；任一邮件不存在时返回错误。
+func (m *Memory) SetFlags(ctx context.Context, a mail.Account, p, folder string, uids []uint32, op string, value bool) error {
+	for _, uid := range uids {
+		if e := m.Change(ctx, a, p, mail.Key{Account: a.ID, Folder: folder, UID: uid}, op, value); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // Change 模拟远端标记、移动和删除。
 func (m *Memory) Change(ctx context.Context, _ mail.Account, _ string, k mail.Key, op string, value any) error {
 	m.mu.Lock()
