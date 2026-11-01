@@ -121,6 +121,16 @@ func (s *Session) accountCommand(id string, p Params) (any, error) {
 			return nil, e
 		}
 		return Params{"imap": candidates[0][0], "smtp": candidates[0][1]}, nil
+	case "account.markAllRead":
+		id, e := required(p, "id")
+		if e != nil {
+			return nil, e
+		}
+		if _, e = s.account(id); e != nil {
+			return nil, e
+		}
+		// 覆盖该账户全部文件夹，不受当前列表范围影响
+		return s.markAllRead(id, "")
 	case "account.remove":
 		key, e := required(p, "id")
 		if e != nil {

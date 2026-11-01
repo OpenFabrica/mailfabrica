@@ -141,6 +141,19 @@ export interface Snapshot {
     text: string | null;
     error: string | null;
   } | null;
+  // AI 垃圾邮件识别结果；候选需用户确认后才移动
+  aiJunk: {
+    busy: boolean;
+    scanned: number;
+    candidates: {
+      key: string;
+      subject: string;
+      from: Address;
+      date: number;
+      reason: string;
+    }[];
+    error: string | null;
+  } | null;
   aiReply: {
     key: string;
     seq: number;

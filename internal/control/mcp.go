@@ -97,7 +97,7 @@ func (b Backend) Execute(id string, p any) (json.RawMessage, error) {
 	if e != nil {
 		return nil, e
 	}
-	wait := map[string]bool{"account.add": true, "mail.sync": true, "message.open": true, "message.markRead": true, "message.toggleRead": true, "message.flag": true, "message.move": true, "message.delete": true, "message.junk": true, "folder.create": true, "folder.markAllRead": true, "compose.send": true, "compose.saveDraft": true, "ai.compose": true, "ai.quickReply": true, "invoice.export": true, "calendar.load": true, "update.check": true, "update.download": true, "update.open": true}
+	wait := map[string]bool{"account.add": true, "mail.sync": true, "message.open": true, "message.markRead": true, "message.toggleRead": true, "message.flag": true, "message.move": true, "message.delete": true, "message.junk": true, "folder.create": true, "folder.markAllRead": true, "account.markAllRead": true, "ai.scanJunk": true, "ai.cleanJunk": true, "compose.send": true, "compose.saveDraft": true, "ai.compose": true, "ai.quickReply": true, "invoice.export": true, "calendar.load": true, "update.check": true, "update.download": true, "update.open": true}
 	if !wait[id] {
 		return result, nil
 	}

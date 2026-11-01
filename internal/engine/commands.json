@@ -778,5 +778,41 @@
     "params": "{email,account?,offset?,limit?}",
     "query": true,
     "gate": "always"
+  },
+  {
+    "id": "account.markAllRead",
+    "label": "Mark Account as Read",
+    "menu": [],
+    "shortcut": null,
+    "params": "{id}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.cleanJunk",
+    "label": "Move AI Junk Candidates",
+    "menu": [],
+    "shortcut": null,
+    "params": "{keys?}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.clearJunk",
+    "label": "Clear AI Junk Result",
+    "menu": [],
+    "shortcut": null,
+    "params": "{}",
+    "query": false,
+    "gate": "always"
+  },
+  {
+    "id": "ai.scanJunk",
+    "label": "Find Junk with AI",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account?, folder?, limit?}",
+    "query": false,
+    "gate": "always"
   }
 ]

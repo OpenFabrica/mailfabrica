@@ -43,11 +43,6 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 			return s.Store.SetFolders(account, folders)
 		}, account)
 	case "folder.markAllRead":
-		keys := []any{}
-		all, e := s.allMessages()
-		if e != nil {
-			return nil, e
-		}
 		account := str(p, "account")
 		folder := str(p, "folder")
 		if account == "" {
@@ -56,15 +51,7 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 		if folder == "" {
 			folder = s.view.Scope.Folder
 		}
-		for _, m := range all {
-			if (account == "" || m.Key.Account == account) && (folder == "" || m.Key.Folder == folder) && !m.Flags.Seen {
-				keys = append(keys, m.Key.String())
-			}
-		}
-		if len(keys) == 0 {
-			return nil, nil
-		}
-		return s.messageCommand("message.markRead", Params{"keys": keys, "read": true})
+		return s.markAllRead(account, folder)
 	case "view.scope":
 		scope := Scope{Kind: str(p, "kind")}
 		if str(p, "account") != "" {
@@ -244,4 +231,22 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 		return nil, fmt.Errorf("主题组不存在")
 	}
 	return nil, fmt.Errorf("未知视图命令")
+}
+
+// markAllRead 将账户/文件夹内全部未读邮件标为已读；空字符串表示不限。
+func (s *Session) markAllRead(account, folder string) (any, error) {
+	keys := []any{}
+	all, e := s.allMessages()
+	if e != nil {
+		return nil, e
+	}
+	for _, m := range all {
+		if (account == "" || m.Key.Account == account) && (folder == "" || m.Key.Folder == folder) && !m.Flags.Seen {
+			keys = append(keys, m.Key.String())
+		}
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	return s.messageCommand("message.markRead", Params{"keys": keys, "read": true})
 }

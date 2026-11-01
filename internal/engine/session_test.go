@@ -39,7 +39,7 @@ func executeTest(t *testing.T, s *Session, id string, p Params) json.RawMessage 
 // TestDemoReadComposeSend 验证从列表、阅读、中文富文本到发送归档的完整闭环。
 func TestDemoReadComposeSend(t *testing.T) {
 	s := testSession(t)
-	if len(s.commands) != 78 {
+	if len(s.commands) != 82 {
 		t.Fatalf("commands %d", len(s.commands))
 	}
 	var list struct {

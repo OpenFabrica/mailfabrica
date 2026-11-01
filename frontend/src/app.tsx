@@ -2,6 +2,7 @@ import { t } from "./i18n";
 import { lazy, useEffect, useRef, useState } from "react";
 import {
   CalendarDays,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -27,6 +28,7 @@ import { AccountDialog, Contacts, Settings } from "./settings";
 import { CalendarView } from "./calendar-view";
 import { InvoiceDialog } from "./invoice-dialog";
 import { FolderDialog } from "./folder-dialog";
+import { JunkDialog } from "./junk-dialog";
 import { ContactTimeline, type ContactIdentity } from "./contact-timeline";
 import { ProviderIcon } from "./provider-icon";
 import type { Account, Params } from "./types";
@@ -413,27 +415,41 @@ export function App() {
             <div className="account-folders">
               {state.accounts.map((a) => (
                 <div key={a.id} className="account-tree">
-                  <button
-                    className="account-title"
-                    title={a.email}
-                    aria-label={a.email}
-                    aria-expanded={!collapsed.includes(a.id)}
-                    onClick={() =>
-                      setCollapsed((v) =>
-                        v.includes(a.id)
-                          ? v.filter((id) => id !== a.id)
-                          : [...v, a.id],
-                      )
-                    }
-                  >
-                    {collapsed.includes(a.id) ? (
-                      <ChevronRight size={12} />
-                    ) : (
-                      <ChevronDown size={12} />
+                  <div className="account-row">
+                    <button
+                      className="account-title"
+                      title={a.email}
+                      aria-label={a.email}
+                      aria-expanded={!collapsed.includes(a.id)}
+                      onClick={() =>
+                        setCollapsed((v) =>
+                          v.includes(a.id)
+                            ? v.filter((id) => id !== a.id)
+                            : [...v, a.id],
+                        )
+                      }
+                    >
+                      {collapsed.includes(a.id) ? (
+                        <ChevronRight size={12} />
+                      ) : (
+                        <ChevronDown size={12} />
+                      )}
+                      <ProviderIcon account={a} />
+                      <span className="account-email">{a.email}</span>
+                    </button>
+                    {/* 该账户有未读时才提供一键已读，悬停显示 */}
+                    {state.folders[a.id]?.some((f) => f.unread > 0) && (
+                      <IconButton
+                        label={en ? "Mark account as read" : t("全部标为已读")}
+                        data-testid={`account.markAllRead.${a.id}`}
+                        onClick={() => {
+                          void run("account.markAllRead", { id: a.id });
+                        }}
+                      >
+                        <CheckCheck />
+                      </IconButton>
                     )}
-                    <ProviderIcon account={a} />
-                    <span className="account-email">{a.email}</span>
-                  </button>
+                  </div>
                   {!collapsed.includes(a.id) &&
                     state.folders[a.id]?.map((f) => (
                       <button
@@ -493,6 +509,7 @@ export function App() {
             onCompose={() => {
               void newCompose();
             }}
+            onJunk={() => setDialog("junk")}
           />
           <div
             className="pane-resizer"
@@ -594,6 +611,9 @@ export function App() {
       )}
       {dialog === "folder" && (
         <FolderDialog ui={ui} onClose={() => setDialog("")} />
+      )}
+      {dialog === "junk" && (
+        <JunkDialog ui={ui} onClose={() => setDialog("")} />
       )}
       {dialog === "invoice" && (
         <InvoiceDialog ui={ui} onClose={() => setDialog("")} />

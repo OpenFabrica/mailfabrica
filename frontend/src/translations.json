@@ -288,5 +288,13 @@
   "早上好": "Good morning",
   "中午好": "Good afternoon",
   "下午好": "Good afternoon",
-  "晚上好": "Good evening"
+  "晚上好": "Good evening",
+  "AI 清理垃圾邮件": "Clean junk with AI",
+  "正在识别": "Checking",
+  "封邮件…": "messages…",
+  "已检查": "Checked",
+  "封邮件，未发现垃圾邮件": "messages. No junk found.",
+  "原因": "Reason",
+  "重新识别": "Check again",
+  "移到垃圾邮件": "Move to junk"
 }

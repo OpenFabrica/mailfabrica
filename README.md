@@ -20,7 +20,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 ### Inbox and reading
 
 - Unified inbox, unread, flagged and invoice views; local search, time ordering and date groups.
-- Compact two-line rows, multiple selection, read/unread flags, follow-up flags, moving, deletion, junk actions and marking a folder as read.
+- Compact two-line rows, multiple selection, read/unread flags, follow-up flags, moving, deletion, junk actions, marking a folder as read, and marking a whole mailbox as read from its sidebar row.
 - Subject-based conversation grouping, an overview and dedicated previous/next navigation within a group.
 - HTML and plain-text reading, tables, inline CID images and attachment saving.
 - With no message selected, the reading pane shows a welcome page: greeting and date, unread/flagged/today's events, shortcuts to common views and keyboard hints.
@@ -51,6 +51,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 - Draft, polish, change tone, shorten, expand and translate message text.
 - Generate quick-reply suggestions, then accept or discard them.
 - Summarize a grouped conversation into a timeline, conclusions and action items, with source counts and visible errors.
+- Clean junk with AI: from the list menu, check the latest 100 messages in the current list using only sender, subject and preview. Suspected junk is listed with reasons and moves to the Junk folder only after you confirm.
 - AI runs only on explicit user actions and does not automatically send mail. Relevant message text is sent to the configured service.
 
 ### Calendar and invoices
@@ -71,7 +72,7 @@ A desktop email client built with **Go and Wails v3**, with React, TypeScript an
 
 ### CLI, MCP and automation
 
-- Desktop, CLI, MCP and the loopback JSON-line control channel share the same Go command engine, currently exposing 78 commands.
+- Desktop, CLI, MCP and the loopback JSON-line control channel share the same Go command engine, currently exposing 82 commands.
 - CLI commands for accounts, synchronization, folders, listing, searching, reading, sending and direct command execution.
 - stdio MCP tools for accounts, folders, mail search/read/send, status, command discovery and the general `mail_execute` entry point.
 - Run MCP independently or connect it to the desktop session with `--control` to share state.

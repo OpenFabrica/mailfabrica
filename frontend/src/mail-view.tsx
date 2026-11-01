@@ -116,9 +116,11 @@ function dateGroup(timestamp: number) {
 export function MailList({
   ui,
   onCompose,
+  onJunk,
 }: {
   ui: SessionUI;
   onCompose: () => void;
+  onJunk: () => void;
 }) {
   const { state, run } = ui;
   const [menu, setMenu] = useState(false);
@@ -196,6 +198,15 @@ export function MailList({
                 }}
               >
                 {en ? "Mark all as read" : t("全部标为已读")}
+              </button>
+              <button
+                data-testid="list.junk"
+                onClick={() => {
+                  onJunk();
+                  setMenu(false);
+                }}
+              >
+                {t("AI 清理垃圾邮件")}
               </button>
             </div>
           )}

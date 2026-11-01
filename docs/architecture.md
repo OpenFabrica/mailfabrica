@@ -3,7 +3,7 @@
 ## 背景和核心规则
 
 MailFabrica 的桌面界面、CLI、MCP 与控制通道共用一套命令，不各自实现收发或数据变更。
-`internal/engine/commands.json` 定义 78 个命令，包含 `ai.summarizeGroup`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
+`internal/engine/commands.json` 定义 82 个命令，包含 `ai.summarizeGroup`、`ai.scanJunk`、`account.markAllRead`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
 
 - 消息身份为账户 + UTF-8 文件夹路径 + UID；命令字符串为 `账户/uid/文件夹`，目录名继续使用 FNV-1a 64 位哈希。
 - 只有会话持有 `Store`。远端协议返回纯数据；每个账户的网络任务串行，其他账户可独立推进；状态应用在会话锁内完成。
@@ -65,3 +65,11 @@ UI 与引擎变更均需验证可观察结果。原生 WebView 的 DOM 截图不
 聚合邮件导航、AI 汇总和多地址写信的命令与数据流见 [conversations.md](conversations.md)。
 
 联系人往来时间线通过 `contacts.timeline` 只读聚合本地跨账户邮件，按收发方向、月份和来源展示，支持分页及打开原邮件；规则与流程见 [contact-timeline.md](contact-timeline.md)。
+
+## 账户一键已读与 AI 垃圾邮件清理
+
+`account.markAllRead {id}` 将该账户全部文件夹的未读邮件标为已读，不受当前列表范围影响；与 `folder.markAllRead` 共用 `markAllRead`，最终经 `message.markRead` 写回服务器。
+
+`ai.scanJunk {account?, folder?, limit?}` 默认检查当前列表，指定账户时检查其文件夹（默认收件箱）。跳过垃圾邮件、已删除、已发送和草稿，按时间取最近 `limit` 封（默认 100，最多 200）。只发送发件人、时间、主题和截断后的预览，不下载正文或附件。模型只返回编号数组，越界和重复编号被忽略，不信任模型给出的邮件键。
+
+结果保存在快照 `aiJunk`（busy、scanned、candidates、error），只是建议。`ai.cleanJunk {keys?}` 只接受候选中的邮件，经 `message.junk` 移到各账户的垃圾邮件文件夹；扫描后已不存在的邮件直接从候选去掉。`ai.clearJunk` 清空结果。实现见 `internal/engine/junk.go` 和 `frontend/src/junk-dialog.tsx`。

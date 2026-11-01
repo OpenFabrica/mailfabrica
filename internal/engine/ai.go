@@ -46,6 +46,16 @@ func (s *Session) aiCommand(id string, p Params) (any, error) {
 	switch id {
 	case "ai.summarizeGroup":
 		return s.summarizeGroup(p)
+	case "ai.scanJunk":
+		return s.scanJunk(p)
+	case "ai.cleanJunk":
+		return s.cleanJunk(p)
+	case "ai.clearJunk":
+		if s.aiJunk != nil && s.aiJunk.Busy {
+			return nil, fmt.Errorf("AI 正在识别垃圾邮件，请稍后再试")
+		}
+		s.aiJunk = nil
+		return nil, nil
 	case "ai.config":
 		if provider, ok := p["provider"]; ok {
 			if provider != "anthropic" && provider != "openai" {
@@ -96,7 +106,7 @@ func (s *Session) aiCommand(id string, p Params) (any, error) {
 		if e != nil {
 			return nil, e
 		}
-		return Params{"config": config, "reply": s.aiReply, "group": s.aiGroupSummary, "composes": composes}, nil
+		return Params{"config": config, "reply": s.aiReply, "group": s.aiGroupSummary, "junk": s.aiJunk, "composes": composes}, nil
 	case "ai.clearReply":
 		s.aiReply = nil
 		return nil, nil
