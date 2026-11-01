@@ -416,7 +416,10 @@ export function App() {
             </div>
             <div className="account-folders">
               {state.accounts.map((a) => (
-                <div key={a.id} className="account-tree">
+                <div
+                  key={a.id}
+                  className={`account-tree ${collapsed.includes(a.id) ? "collapsed" : ""}`}
+                >
                   <div className="account-row">
                     <button
                       className="account-title"

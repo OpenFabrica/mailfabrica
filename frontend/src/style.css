@@ -316,6 +316,10 @@ button svg {
 .account-tree {
   margin-bottom: 14px;
 }
+/* 折叠后没有文件夹列表，账户行之间只留很小的间隔 */
+.account-tree.collapsed {
+  margin-bottom: 2px;
+}
 .sidebar .account-title {
   font-size: 11px;
   color: #81818f;
