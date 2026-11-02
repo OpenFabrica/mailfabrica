@@ -3215,3 +3215,30 @@ button svg {
   overflow: auto;
   overflow-wrap: anywhere;
 }
+
+/* 译文与原邮件同区滚动，长链接换行，不覆盖阅读工具栏。 */
+.mail-translation {
+  margin-bottom: 20px;
+}
+.translation-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.translation-toolbar select {
+  width: auto;
+  max-width: 190px;
+}
+.translation-result {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.translation-result .translation-toolbar {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}

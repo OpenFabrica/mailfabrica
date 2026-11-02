@@ -56,7 +56,7 @@ JSON 配置（`.mcp.json`、Claude Desktop、其他客户端）：
 | `ui_inspect` | — | 界面状态（仅远程模式） |
 
 AI 助手、发票导出和日历没有单独的工具，用 `mail_execute` 调命令：`ai.config`（设置服务和密钥）、`ai.compose` / `ai.accept` / `ai.dismiss`（写信助手）、
-`ai.quickReply` / `ai.clearReply` / `ai.status`（快速回复）、`invoice.list` / `invoice.export` / `invoice.status`（发票）、
+`ai.translate {key?, language?}`（邮件翻译，见 [翻译规则](mail-translation.md)）、`ai.quickReply` / `ai.clearReply` / `ai.status`（快速回复）、`invoice.list` / `invoice.export` / `invoice.status`（发票）、
 `calendar.load` / `calendar.days` / `calendar.status`（日历：先 `calendar.load` 读系统日历，再 `calendar.days` 按天取邮件和日程）；
 `view.scope` 传 `{"kind": "invoices"}` 切到发票范围。参数见 `mail_commands`。
 `ai.*` 只在用户已配置 AI 服务后可用，调用时邮件内容会发给该服务。

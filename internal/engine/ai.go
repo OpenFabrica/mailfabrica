@@ -44,6 +44,8 @@ func ownBodyEnd(body string) int {
 // aiCommand 保留建议采用/放弃流程，生成结果不直接覆盖用户正文。
 func (s *Session) aiCommand(id string, p Params) (any, error) {
 	switch id {
+	case "ai.translate":
+		return s.translateMessage(p)
 	case "ai.summarizeGroup":
 		return s.summarizeGroup(p)
 	case "ai.scanJunk":
@@ -106,7 +108,7 @@ func (s *Session) aiCommand(id string, p Params) (any, error) {
 		if e != nil {
 			return nil, e
 		}
-		return Params{"config": config, "reply": s.aiReply, "group": s.aiGroupSummary, "junk": s.aiJunk, "composes": composes}, nil
+		return Params{"config": config, "reply": s.aiReply, "group": s.aiGroupSummary, "junk": s.aiJunk, "translation": s.aiTranslation, "composes": composes}, nil
 	case "ai.clearReply":
 		s.aiReply = nil
 		return nil, nil

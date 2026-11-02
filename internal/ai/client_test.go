@@ -61,3 +61,20 @@ func TestURLAndErrorPrivacy(t *testing.T) {
 		t.Fatalf("unsafe error: %v", e)
 	}
 }
+
+// TestTranslateRejectsTruncatedOutput 防止长邮件达到输出上限后显示不完整译文。
+func TestTranslateRejectsTruncatedOutput(t *testing.T) {
+	for _, tc := range []struct{ provider, response string }{
+		{"openai", `{"choices":[{"finish_reason":"length","message":{"content":"partial translation"}}]}`},
+		{"anthropic", `{"stop_reason":"max_tokens","content":[{"type":"text","text":"partial translation"}]}`},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, tc.response) }))
+			defer server.Close()
+			text, err := Translate(context.Background(), Config{Provider: tc.provider, BaseURL: server.URL, Model: "test-only"}, "test-only-key", "test")
+			if err == nil || text != "" {
+				t.Fatalf("truncated output accepted: %q %v", text, err)
+			}
+		})
+	}
+}

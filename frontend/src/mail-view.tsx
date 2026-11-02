@@ -1,4 +1,5 @@
 import { t } from "./i18n";
+import { MailTranslation } from "./translation";
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -631,6 +632,9 @@ export function Reader({
               {t("重试")}
             </button>
           </div>
+        )}
+        {body && currentKey && (
+          <MailTranslation key={currentKey} ui={ui} messageKey={currentKey} />
         )}
         {body && (
           <EmailContent

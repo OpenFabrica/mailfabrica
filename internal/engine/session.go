@@ -164,6 +164,7 @@ type Session struct {
 	revision         uint64
 	contactIndex     *contactIndex
 	aiGroupSummary   *GroupSummary
+	aiTranslation    *Translation
 	aiJunk           *JunkScan
 	aiReply          any
 	calendar         CalendarState
@@ -589,7 +590,7 @@ func (s *Session) Snapshot() json.RawMessage {
 	if s.view.Focused != nil {
 		current = s.messageResult(*s.view.Focused)
 	}
-	v := Params{"revision": s.revision, "accounts": s.Store.Accounts, "folders": s.Store.Folders, "view": s.view, "counts": s.counts, "message": current, "composes": composes, "prefs": s.prefs, "status": s.status, "requests": s.requests, "aiReply": s.aiReply, "aiGroupSummary": s.aiGroupSummary, "aiJunk": s.aiJunk, "calendar": s.calendar, "invoice": s.invoice, "update": s.update, "demo": s.demo}
+	v := Params{"revision": s.revision, "accounts": s.Store.Accounts, "folders": s.Store.Folders, "view": s.view, "counts": s.counts, "message": current, "composes": composes, "prefs": s.prefs, "status": s.status, "requests": s.requests, "aiReply": s.aiReply, "aiGroupSummary": s.aiGroupSummary, "aiTranslation": s.aiTranslation, "aiJunk": s.aiJunk, "calendar": s.calendar, "invoice": s.invoice, "update": s.update, "demo": s.demo}
 	b, _ := json.Marshal(v)
 	return b
 }

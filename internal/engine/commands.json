@@ -823,5 +823,16 @@
     "params": "{keys?}",
     "query": false,
     "gate": "has_selection"
+  },
+  {
+    "id": "ai.translate",
+    "label": "Translate Email",
+    "menu": [
+      "AI"
+    ],
+    "shortcut": null,
+    "params": "{key?, language?: zh-CN|zh-TW|en|ja|ko}",
+    "query": false,
+    "gate": "always"
   }
 ]

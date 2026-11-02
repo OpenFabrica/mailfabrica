@@ -134,6 +134,13 @@ export interface Snapshot {
     busyAccounts: string[];
   };
   requests: UIRequest[];
+  aiTranslation: {
+    key: string;
+    language: string;
+    busy: boolean;
+    text: string | null;
+    error: string | null;
+  } | null;
   aiGroupSummary: {
     group: string;
     keys: string[];
