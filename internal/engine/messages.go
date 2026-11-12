@@ -320,7 +320,8 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 	for id := range accounts {
 		accountIDs = append(accountIDs, id)
 	}
-	return nil, s.launch(fmt.Sprintf("message.mutate:%d", s.revision), func(ctx context.Context) (any, error) {
+	task := fmt.Sprintf("message.mutate:%d", s.revision)
+	err := s.launch(task, func(ctx context.Context) (any, error) {
 		// 同一文件夹的标记或移动合并为一次连接，避免逐封登录触发服务器限流
 		type batch struct {
 			account, folder, op string
@@ -373,7 +374,18 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 		confirmed := []mutation{}
 		reverted := []mutation{}
 		removed := map[string]map[uint32]bool{}
+		changedAccounts := map[string]map[string]bool{}
 		for _, a := range results {
+			// 批次返回错误时可能已有部分 UID 成功，仍须核对源目录和目标目录。
+			if a.Op == "move" || a.Op == "delete" {
+				if changedAccounts[a.Key.Account] == nil {
+					changedAccounts[a.Key.Account] = map[string]bool{}
+				}
+				changedAccounts[a.Key.Account][a.Key.Folder] = true
+				if dest, ok := a.Value.(string); ok && dest != "" {
+					changedAccounts[a.Key.Account][dest] = true
+				}
+			}
 			if a.Err != nil {
 				// 批量失败通常是同一原因，去重后再提示，避免错误文本无限变长
 				failed++
@@ -410,7 +422,6 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 		if err != nil {
 			return err
 		}
-		changedAccounts := map[string]bool{}
 		for folderKey, uids := range removed {
 			account, folder, _ := strings.Cut(folderKey, "\x00")
 			idx, err := s.Store.Index(account, folder)
@@ -427,23 +438,36 @@ func (s *Session) messageCommand(id string, p Params) (any, error) {
 			if err = s.Store.SaveIndex(account, folder); err != nil {
 				return err
 			}
-			changedAccounts[account] = true
 		}
 		if applied || undone || len(removed) > 0 {
 			if err := s.refresh(); err != nil {
 				return err
 			}
 		}
-		for account := range changedAccounts {
-			if _, err := s.startSync(account); err != nil {
+		for account, folders := range changedAccounts {
+			paths := []string{}
+			for path := range folders {
+				paths = append(paths, path)
+			}
+			if _, err := s.startSyncFolders(account, false, paths); err != nil {
 				return err
 			}
 		}
 		if failed > 0 {
+			if len(changedAccounts) > 0 {
+				return fmt.Errorf("部分移动或删除未能确认，已安排重新核对: %s", strings.Join(reasons, "; "))
+			}
 			return fmt.Errorf("%d 封邮件操作失败: %s", failed, strings.Join(reasons, "; "))
 		}
 		return nil
 	}, accountIDs...)
+	if err != nil {
+		return nil, err
+	}
+	if id == "message.delete" {
+		return Params{"task": task, "revision": s.revision}, nil
+	}
+	return nil, nil
 }
 
 // applyFlags 将已读/红旗变更写入本地索引，revert 为真时恢复原值；返回是否写入，由调用方刷新视图。

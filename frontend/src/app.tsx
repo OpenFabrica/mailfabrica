@@ -1,3 +1,4 @@
+import { DeletionStatus } from "./deletion-status";
 import { t } from "./i18n";
 import { lazy, useEffect, useRef, useState } from "react";
 import {
@@ -9,6 +10,7 @@ import {
   Flag,
   Inbox,
   Mail,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -20,7 +22,8 @@ import {
 import { useSession } from "./use-session";
 import { nativeBridge } from "./api";
 import { IconButton, folderIcon, folderName, Dialog } from "./components";
-import { MailList, Reader } from "./mail-view";
+import { Reader } from "./mail-view";
+import { MailList } from "./mail-list";
 const ComposeView = lazy(() =>
   import("./compose-view").then((m) => ({ default: m.ComposeView })),
 );
@@ -31,6 +34,7 @@ import { FolderDialog } from "./folder-dialog";
 import { JunkDialog } from "./junk-dialog";
 import { ContactTimeline, type ContactIdentity } from "./contact-timeline";
 import { ProviderIcon } from "./provider-icon";
+import { FolderMenu, type FolderMenuTarget } from "./folder-menu";
 import type { Account, Params } from "./types";
 // App 组合桌面壳与各功能区域，不直接持有业务邮件数据。
 export function App() {
@@ -74,6 +78,7 @@ export function App() {
   const [editing, setEditing] = useState<Account | undefined>();
   const [composeID, setComposeID] = useState<number | null>(null);
   const [query, setQuery] = useState("");
+  const [folderMenu, setFolderMenu] = useState<FolderMenuTarget | null>(null);
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const collapseLoaded = useRef(false);
   useEffect(() => {
@@ -409,7 +414,27 @@ export function App() {
                   >
                     <Component size={16} />
                     <span>{label as string}</span>
-                    {count !== null && count > 0 && <small>{count}</small>}
+                    {count !== null &&
+                      count > 0 &&
+                      ![...ui.deletingFolders].some((key) => {
+                        const [account, path] = key.split("\0");
+                        return (
+                          K === "unread" ||
+                          (K === "allInboxes" &&
+                            state.folders[account]?.some(
+                              (f) => f.path === path && f.role === "inbox",
+                            ))
+                        );
+                      }) &&
+                      !ui.changingFolders.some(
+                        (item) =>
+                          K === "unread" ||
+                          (K === "allInboxes" &&
+                            state.folders[item.account]?.some(
+                              (f) =>
+                                f.path === item.folder && f.role === "inbox",
+                            )),
+                      ) && <small>{count}</small>}
                   </button>
                 );
               })}
@@ -457,19 +482,56 @@ export function App() {
                   </div>
                   {!collapsed.includes(a.id) &&
                     state.folders[a.id]?.map((f) => (
-                      <button
-                        key={f.path}
-                        data-testid={`folder.${a.id}.${f.path}`}
-                        disabled={!f.selectable}
-                        className={`folder ${scope.kind === "folder" && scope.account === a.id && scope.folder === f.path ? "active" : ""}`}
-                        onClick={() =>
-                          switchScope({ account: a.id, folder: f.path })
-                        }
-                      >
-                        {folderIcon(f.role)}
-                        <span>{folderName(f.path, f.role, en)}</span>
-                        {f.unread > 0 && <small>{f.unread}</small>}
-                      </button>
+                      <div key={f.path} className="folder-row">
+                        <button
+                          data-testid={`folder.${a.id}.${f.path}`}
+                          disabled={!f.selectable}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            setFolderMenu({
+                              account: a.id,
+                              folder: f,
+                              x: event.clientX,
+                              y: event.clientY,
+                            });
+                          }}
+                          className={`folder ${scope.kind === "folder" && scope.account === a.id && scope.folder === f.path ? "active" : ""}`}
+                          onClick={() =>
+                            switchScope({ account: a.id, folder: f.path })
+                          }
+                        >
+                          {folderIcon(f.role)}
+                          <span>{folderName(f.path, f.role, en)}</span>
+                          {f.unread > 0 &&
+                            !ui.deletingFolders.has(`${a.id}\0${f.path}`) &&
+                            !ui.changingFolders.some(
+                              (item) =>
+                                item.account === a.id && item.folder === f.path,
+                            ) && <small>{f.unread}</small>}
+                        </button>
+                        <IconButton
+                          className="folder-more"
+                          label={`${folderName(f.path, f.role, en)} · ${en ? "Folder actions" : t("文件夹操作")}`}
+                          disabled={!f.selectable}
+                          data-testid={`folder.actions.${a.id}.${f.path}`}
+                          aria-expanded={
+                            folderMenu?.account === a.id &&
+                            folderMenu.folder.path === f.path
+                          }
+                          onClick={(event) => {
+                            const rect =
+                              event.currentTarget.getBoundingClientRect();
+                            setFolderMenu({
+                              account: a.id,
+                              folder: f,
+                              x: rect.right,
+                              y: rect.bottom,
+                            });
+                          }}
+                        >
+                          <MoreHorizontal size={14} />
+                        </IconButton>
+                      </div>
                     ))}
                 </div>
               ))}
@@ -544,17 +606,13 @@ export function App() {
           }}
         />
       )}
+      <DeletionStatus ui={ui} />
       {error && (
         <div className="error-toast" role="alert">
           <span>{error}</span>
           <IconButton label={t("关闭错误")} onClick={() => ui.setError("")}>
             <X />
           </IconButton>
-        </div>
-      )}
-      {state.status.errors.length > 0 && !error && (
-        <div className="status-error" role="status">
-          {state.status.errors.at(-1)?.[1]}
         </div>
       )}
       {dialog === "settings" && (
@@ -612,6 +670,13 @@ export function App() {
               current.filter((id) => id !== message.key.account),
             );
           }}
+        />
+      )}
+      {folderMenu && (
+        <FolderMenu
+          target={folderMenu}
+          ui={ui}
+          onClose={() => setFolderMenu(null)}
         />
       )}
       {dialog === "folder" && (

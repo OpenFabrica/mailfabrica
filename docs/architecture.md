@@ -3,16 +3,18 @@
 ## 背景和核心规则
 
 MailFabrica 的桌面界面、CLI、MCP 与控制通道共用一套命令，不各自实现收发或数据变更。
-`internal/engine/commands.json` 定义 84 个命令，包含 `ai.translate`、`ai.summarizeGroup`、`ai.scanJunk`、`account.markAllRead`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
+`internal/engine/commands.json` 定义 86 个命令，包含 `ai.translate`、`ai.summarizeGroup`、`ai.scanJunk`、`account.markAllRead`、`contacts.suggest` 和 `contacts.timeline`；`Session.Execute` 是业务操作入口，`Snapshot` 形成不可变读取快照。
 
 - 消息身份为账户 + UTF-8 文件夹路径 + UID；命令字符串为 `账户/uid/文件夹`，目录名继续使用 FNV-1a 64 位哈希。
-- 只有会话持有 `Store`。远端协议返回纯数据；每个账户的网络任务串行，其他账户可独立推进；状态应用在会话锁内完成。
+- 只有会话持有 `Store`。远端协议返回纯数据；每个账户的变更与同步任务串行，IDLE 使用独立只读监听连接，其他账户可独立推进；状态应用在会话锁内完成。
 - UIDVALIDITY 改变时旧 UID 缓存失效，不能让同号旧 `.eml` 冒充新邮件。
 - 正文、邮件头、命令参数及服务端回复均是不可信输入；附件、MIME、HTTP 响应、日期范围和命令数据均设限。
 - HTML 在禁止脚本的隔离 iframe 中排版；宿主只提供固定阅读操作，不提供任意脚本执行。
 - 写信内容、签名和原文引用分开处理。富文本命令使用 Unicode 字符偏移，界面通过 HTML 同步到同一模型。
 - SMTP DATA 成功后 QUIT 断线不视为可重试发送失败；发送副本保存失败单独提示。
 - 演示模式使用内存服务器及独立目录，不读取真实密码，也不查询真实系统日历。
+
+收件采用一分钟快速检查、低频完整同步及 IDLE 通知；邮件头先显示，正文随后补充。流程、失败语义及测试边界见 [快速收件与增量显示](mail-sync.md)。
 
 ## 模块
 

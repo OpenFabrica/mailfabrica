@@ -88,6 +88,7 @@ type Status struct {
 	LastSync      int64        `json:"lastSync"`
 	Revision      uint64       `json:"revision"`
 	BusyAccounts  []string     `json:"busyAccounts"`
+	BusyTasks     []string     `json:"busyTasks"`
 }
 
 // Quote 将原文与用户编辑内容分离。
@@ -174,7 +175,7 @@ type Session struct {
 
 // defaultPrefs 沿用既有版本的持久化默认值。
 func defaultPrefs() Params {
-	return Params{"closeToTray": false, "markReadOnOpen": true, "remoteImages": true, "syncIntervalMinutes": float64(10), "syncLimit": float64(500), "prefetch": float64(50), "quoteOnReply": true, "saveSent": true, "chineseQuotes": true, "language": "zh-CN", "composeRich": true, "groupBySubject": true, "mailListDensity": "compact", "theme": "system", "collapsed": []any{}, "calendarHiddenAccounts": []any{}, "calendarHiddenCalendars": []any{}, "sidebarWidth": float64(220), "listWidth": float64(350), "aiProvider": "anthropic", "aiBaseUrl": "", "aiModel": ""}
+	return Params{"closeToTray": false, "markReadOnOpen": true, "remoteImages": true, "syncIntervalMinutes": float64(1), "syncLimit": float64(500), "prefetch": float64(50), "quoteOnReply": true, "saveSent": true, "chineseQuotes": true, "language": "zh-CN", "composeRich": true, "groupBySubject": true, "mailListDensity": "compact", "theme": "system", "collapsed": []any{}, "calendarHiddenAccounts": []any{}, "calendarHiddenCalendars": []any{}, "sidebarWidth": float64(220), "listWidth": float64(350), "aiProvider": "anthropic", "aiBaseUrl": "", "aiModel": ""}
 }
 
 // New 创建独立会话；demo 只使用调用方提供的演示数据目录。
@@ -242,22 +243,74 @@ func New(root string, demo bool) (*Session, error) {
 // Close 取消外部任务并等待所有后台工作退出。
 func (s *Session) Close() { s.cancel(); s.wg.Wait() }
 
-// autoSync 定时检查偏好，避免前端关窗后同步停止。
+// syncPlan 快速收件按用户间隔运行，完整核对至少相隔十分钟；关闭自动收取时两者均停止。
+func syncPlan(now, lastQuick, lastFull time.Time, minutes int) (due, full bool) {
+	if minutes <= 0 {
+		return false, false
+	}
+	interval := time.Duration(minutes) * time.Minute
+	if now.Sub(lastQuick) < interval {
+		return false, false
+	}
+	return true, now.Sub(lastFull) >= max(interval, 10*time.Minute)
+}
+
+// autoSync 快速检查收件箱，低频完整核对其它文件夹；启动后先进行一次完整同步。
 func (s *Session) autoSync() {
 	defer s.wg.Done()
-	tick := time.NewTicker(time.Second * 10)
+	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
-	last := time.Now()
+	lastQuick, lastFull := time.Now(), time.Now()
+	changes := make(chan string, 64)
+	watches := map[string]inboxWatch{}
+	pending := map[string]bool{}
+	defer func() {
+		for _, watch := range watches {
+			watch.cancel()
+		}
+	}()
+	if !s.demo {
+		lastQuick = time.Time{}
+		lastFull = time.Time{}
+	}
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-tick.C:
+		case account := <-changes:
+			pending[account] = true
+		case now := <-tick.C:
 			s.mu.Lock()
-			minutes := number(s.prefs, "syncIntervalMinutes", 10)
-			if minutes > 0 && time.Since(last) >= time.Duration(minutes)*time.Minute {
-				_, _ = s.startSync("")
-				last = time.Now()
+			s.reconcileInboxWatches(watches, changes)
+			for account := range pending {
+				if _, err := s.account(account); err != nil || number(s.prefs, "syncIntervalMinutes", 1) <= 0 {
+					delete(pending, account)
+					continue
+				}
+				if s.busy[account] {
+					continue
+				}
+				if _, err := s.startSyncMode(account, true); err != nil {
+					s.errStatus("sync.schedule", err)
+					s.touch()
+				}
+				delete(pending, account)
+			}
+			due, full := syncPlan(now, lastQuick, lastFull, number(s.prefs, "syncIntervalMinutes", 1))
+			if due {
+				result, err := s.startSyncMode("", !full)
+				if err != nil {
+					s.errStatus("sync.schedule", err)
+					s.touch()
+				} else if started, ok := result.(Params); ok {
+					count, _ := started["started"].(int)
+					if count > 0 {
+						lastQuick = now
+						if full {
+							lastFull = now
+						}
+					}
+				}
 			}
 			s.mu.Unlock()
 		}
@@ -311,6 +364,11 @@ func (s *Session) touch() {
 	s.status.Composes = len(s.composes)
 	s.status.Update = &s.update
 	s.status.Busy = len(s.busy) > 0
+	s.status.BusyTasks = []string{}
+	for task := range s.busy {
+		s.status.BusyTasks = append(s.status.BusyTasks, task)
+	}
+	sort.Strings(s.status.BusyTasks)
 	s.status.BusyAccounts = []string{}
 	for a := range s.accountBusy {
 		s.status.BusyAccounts = append(s.status.BusyAccounts, a)
@@ -550,7 +608,7 @@ func redacted(p Params) Params {
 // validateParams 拒绝常用参数类型错误，避免依赖零值静默改变行为。
 func validateParams(id string, p Params) error {
 	numeric := map[string]bool{"id": strings.HasPrefix(id, "compose.") || id == "ai.compose" || id == "ai.accept" || id == "ai.dismiss", "limit": true, "offset": true, "index": true, "start": true, "end": true, "imapPort": true, "smtpPort": true}
-	bools := map[string]bool{"verify": true, "read": true, "flagged": true, "extend": true, "rich": true, "group": id == "message.list", "unreadOnly": true, "force": true}
+	bools := map[string]bool{"verify": true, "read": true, "flagged": true, "extend": true, "open": id == "view.select", "selected": id == "view.select", "rich": true, "group": id == "message.list", "unreadOnly": true, "force": true}
 	for k, v := range p {
 		if numeric[k] {
 			n, ok := v.(float64)
@@ -687,6 +745,19 @@ func (s *Session) refresh() error {
 			s.view.Messages = append(s.view.Messages, m)
 		}
 	}
+
+	// 搜索、已读过滤或移动删除后，批量选择只保留当前列表仍存在的邮件。
+	visible := map[string]bool{}
+	for _, m := range s.view.Messages {
+		visible[m.Key.String()] = true
+	}
+	selected := []string{}
+	for _, key := range s.view.Selected {
+		if visible[key] {
+			selected = append(selected, key)
+		}
+	}
+	s.view.Selected = selected
 	s.view.Rows = []Row{}
 	groups := map[string]int{}
 	for _, m := range s.view.Messages {

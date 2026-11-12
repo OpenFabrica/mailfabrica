@@ -132,6 +132,8 @@ export interface Snapshot {
     errors: [string, string][];
     lastSync: number;
     busyAccounts: string[];
+    busyTasks: string[];
+    errorRevision: number;
   };
   requests: UIRequest[];
   aiTranslation: {

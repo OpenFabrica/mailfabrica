@@ -372,6 +372,8 @@ button svg {
   background: var(--accent);
 }
 .mail-list {
+  --mail-row-height: 94px;
+  --mail-date-height: 22px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -403,6 +405,7 @@ button svg {
 }
 .list-scroll {
   overflow: auto;
+  overflow-anchor: none;
   flex: 1;
   padding: 4px 6px;
 }
@@ -418,7 +421,8 @@ button svg {
   background: var(--surface);
   text-align: left;
   white-space: normal;
-  min-height: 94px;
+  min-height: var(--mail-row-height);
+  height: var(--mail-row-height);
 }
 .mail-row:last-child {
   border-bottom-color: transparent;
@@ -1405,19 +1409,6 @@ button svg {
   z-index: 40;
   font-size: 12px;
 }
-.status-error {
-  position: fixed;
-  bottom: 4px;
-  left: 25px;
-  max-width: calc(100vw - 50px);
-  font-size: 10px;
-  color: #c66;
-  /* 超长错误只显示一行，不覆盖界面 */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  pointer-events: none;
-}
 .loading-screen {
   height: 100dvh;
   display: flex;
@@ -1989,7 +1980,7 @@ button svg {
   scrollbar-color: #c5c5cc transparent;
 }
 .date-group {
-  height: 22px;
+  height: var(--mail-date-height, 22px);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -2002,8 +1993,8 @@ button svg {
   border-radius: 0;
 }
 .compact .mail-row {
-  height: 48px;
-  min-height: 48px;
+  height: var(--mail-row-height);
+  min-height: var(--mail-row-height);
   padding: 5px 12px 5px 9px;
   gap: 7px;
   border-bottom: 1px solid var(--line);
@@ -3076,9 +3067,11 @@ button svg {
   min-height: 0;
   width: 100%;
 }
+/* 正文外层承接原生滚动，iframe 展开到内容高度，避免 WebKit 将滑轮困在禁脚本文档内。 */
 .reader-content > .email-frame {
   flex: 1;
-  display: flex;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .email-frame > iframe {
   display: block;
@@ -3086,6 +3079,7 @@ button svg {
 .email-link-layer {
   position: absolute;
   inset: 0;
+  bottom: auto;
   overflow: hidden;
   pointer-events: none;
 }
@@ -3241,4 +3235,237 @@ button svg {
 .translation-result .translation-toolbar {
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+/* 文件夹动作与主按钮并列，键盘聚焦时也显示入口。 */
+.folder-row {
+  position: relative;
+}
+.sidebar .folder-row > .folder {
+  padding-right: 35px;
+}
+.sidebar .folder-more {
+  position: absolute;
+  right: 2px;
+  top: 0;
+  width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  opacity: 0;
+}
+.folder-row:hover .folder-more,
+.folder-row:focus-within .folder-more {
+  opacity: 1;
+}
+.folder-menu {
+  position: fixed;
+  z-index: 40;
+  width: 210px;
+}
+
+/* 删除即时反馈固定在右下角，不在文件夹行中保留过期数字。 */
+.folder-delete-status {
+  position: fixed;
+  right: 16px;
+  bottom: 8px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  box-shadow: var(--shadow);
+  z-index: 30;
+  overflow-wrap: anywhere;
+}
+
+/* 多选控件与阅读按钮并列，勾选不触发打开邮件。 */
+.mail-row-container {
+  position: relative;
+}
+.mail-row-container > .mail-row {
+  border-bottom: 1px solid var(--line);
+}
+.mail-row-container.selecting > .mail-row {
+  padding-left: 30px;
+}
+.mail-row-container.selecting .unread-dot {
+  display: none;
+}
+.mail-row-check {
+  position: absolute;
+  left: 9px;
+  top: 16px;
+  margin: 0;
+  z-index: 1;
+  accent-color: var(--accent);
+}
+.mail-list .pane-heading {
+  gap: 8px;
+}
+.mail-list .pane-heading h1 {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 1;
+}
+.list-select-toggle {
+  flex-shrink: 0;
+  gap: 4px;
+}
+.list-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.list-bulk-actions label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.list-bulk-actions input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+.bulk-count {
+  color: var(--muted);
+  flex: 1;
+  white-space: nowrap;
+}
+.list-bulk-actions button {
+  padding: 4px 6px;
+  gap: 4px;
+  font-size: 11px;
+  min-height: 26px;
+}
+
+/* 删除通知占据独立底栏，不覆盖正文、快速回复或发送按钮。 */
+.mail-operation-status {
+  flex-shrink: 0;
+  min-height: 26px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.mail-operation-status span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-operation-status.error {
+  color: #c66;
+}
+
+/* 退场交错最多 900ms，动画 220ms，整批不超过 1.2 秒；网络速度不参与计时。 */
+.mail-row-container.deleting {
+  overflow: hidden;
+  pointer-events: none;
+  animation: mail-row-delete 220ms ease both;
+}
+@keyframes mail-row-delete {
+  from {
+    max-height: 120px;
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    max-height: 0;
+    opacity: 0;
+    transform: translateX(-10px);
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mail-row-container.deleting {
+    animation-duration: 1ms;
+    animation-delay: 0ms !important;
+  }
+}
+
+.mail-body-loading {
+  min-height: 200px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.mail-body-loading > svg {
+  color: var(--accent);
+}
+.email-frame > .mail-body-loading {
+  position: absolute;
+  inset: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.email-frame {
+  position: relative;
+}
+.mail-body-skeleton {
+  width: min(320px, 65%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 5px;
+}
+.mail-body-skeleton i {
+  display: block;
+  height: 9px;
+  border-radius: 5px;
+  background: var(--line);
+  animation: mail-loading-pulse 1.1s ease-in-out infinite alternate;
+}
+.mail-body-skeleton i:nth-child(2) {
+  width: 85%;
+  animation-delay: 120ms;
+}
+.mail-body-skeleton i:nth-child(3) {
+  width: 60%;
+  animation-delay: 240ms;
+}
+@keyframes mail-loading-pulse {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 0.9;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mail-body-loading .spin,
+  .mail-body-skeleton i {
+    animation: none;
+  }
+}
+
+/* 虚拟行仅保留约两屏；占位保持完整滚动条，退场行在动画结束前保留逻辑高度。 */
+.mail-list.compact {
+  --mail-row-height: 48px;
+}
+.mail-list-slot {
+  overflow: hidden;
+}
+.list-spacer {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.list-scroll:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -39,6 +40,7 @@ type Remote interface {
 	Change(context.Context, mail.Account, string, mail.Key, string, any) error
 	SetFlags(context.Context, mail.Account, string, string, []uint32, string, bool) error
 	MoveMany(context.Context, mail.Account, string, string, []uint32, string) error
+	ChangeFolder(context.Context, mail.Account, string, string, string, string) error
 	Create(context.Context, mail.Account, string, string) error
 	Append(context.Context, mail.Account, string, string, []byte, []string) error
 	Send(context.Context, mail.Account, string, mail.Outgoing) ([]byte, error)
@@ -115,185 +117,6 @@ func (Network) Verify(ctx context.Context, a mail.Account, p string) error {
 		close()
 	}
 	return e
-}
-
-// Sync 同步有限数量的最新邮件头，同时取得完整 UID 集合用于删除检测。
-func (Network) Sync(ctx context.Context, a mail.Account, password string, limit, prefetch uint32, known ...map[string]KnownFolder) ([]FolderResult, error) {
-	c, close, e := dialIMAP(ctx, a, password)
-	if e != nil {
-		return nil, e
-	}
-	defer close()
-	ch := make(chan *imap.MailboxInfo, 32)
-	done := make(chan error, 1)
-	go func() { done <- c.List("", "*", ch) }()
-	list := []*imap.MailboxInfo{}
-	for f := range ch {
-		if len(list) >= 2000 {
-			c.Terminate()
-			return nil, fmt.Errorf("文件夹超过 2000 个")
-		}
-		list = append(list, f)
-	}
-	if e = <-done; e != nil {
-		return nil, e
-	}
-	out := []FolderResult{}
-	for _, f := range list {
-		if e = ctx.Err(); e != nil {
-			return nil, e
-		}
-		selectable := true
-		for _, attr := range f.Attributes {
-			if strings.EqualFold(attr, imap.NoSelectAttr) {
-				selectable = false
-			}
-		}
-		delim := f.Delimiter
-		fr := FolderResult{Folder: mail.Folder{Account: a.ID, Path: f.Name, Delimiter: &delim, Role: mail.FolderRole(f.Name, f.Attributes), Selectable: selectable}, Messages: []mail.Message{}, UIDs: []uint32{}, Raw: map[uint32][]byte{}}
-		if !selectable {
-			out = append(out, fr)
-			continue
-		}
-		status, err := c.Select(f.Name, false)
-		if err != nil {
-			return nil, err
-		}
-		fr.Folder.UIDValidity = status.UidValidity
-		fr.Folder.Total = status.Messages
-		ids, err := c.UidSearch(imap.NewSearchCriteria())
-		if err != nil {
-			return nil, err
-		}
-		fr.UIDs = ids
-		if len(ids) > 2000000 {
-			return nil, fmt.Errorf("文件夹邮件过多")
-		}
-		start := len(ids) - int(limit)
-		if start < 0 {
-			start = 0
-		}
-		if len(ids) == 0 {
-			out = append(out, fr)
-			continue
-		}
-		newIDs := append([]uint32{}, ids[start:]...)
-		prior := KnownFolder{}
-		if len(known) > 0 {
-			prior = known[0][f.Name]
-		}
-		if prior.UIDValidity == status.UidValidity && len(prior.Messages) > 0 {
-			lastUID := uint32(0)
-			for uid := range prior.Messages {
-				if uid > lastUID {
-					lastUID = uid
-				}
-			}
-			newIDs = []uint32{}
-			for _, uid := range ids {
-				if uid > lastUID {
-					newIDs = append(newIDs, uid)
-				}
-			}
-			// 已知邮件仅刷新标记；新邮件才获取 Envelope 和正文，避免反复下载。
-			knownIDs := []uint32{}
-			for _, uid := range ids {
-				if _, ok := prior.Messages[uid]; ok {
-					knownIDs = append(knownIDs, uid)
-				}
-			}
-			for offset := 0; offset < len(knownIDs); offset += 2000 {
-				end := offset + 2000
-				if end > len(knownIDs) {
-					end = len(knownIDs)
-				}
-				flagsSet := new(imap.SeqSet)
-				flagsSet.AddNum(knownIDs[offset:end]...)
-				flagMessages := make(chan *imap.Message, 32)
-				go func() { done <- c.UidFetch(flagsSet, []imap.FetchItem{imap.FetchUid, imap.FetchFlags}, flagMessages) }()
-				for m := range flagMessages {
-					meta, ok := prior.Messages[m.Uid]
-					if ok {
-						meta.Flags = flagsFromIMAP(m.Flags)
-						fr.Messages = append(fr.Messages, meta)
-					}
-				}
-				if e = <-done; e != nil {
-					return nil, e
-				}
-			}
-		}
-		if len(newIDs) > int(limit) && limit > 0 {
-			newIDs = newIDs[len(newIDs)-int(limit):]
-		}
-		if len(newIDs) == 0 {
-			out = append(out, fr)
-			continue
-		}
-		set := new(imap.SeqSet)
-		set.AddNum(newIDs...)
-		messages := make(chan *imap.Message, 32)
-		go func() {
-			done <- c.UidFetch(set, []imap.FetchItem{imap.FetchUid, imap.FetchEnvelope, imap.FetchFlags, imap.FetchRFC822Size}, messages)
-		}()
-		for m := range messages {
-			if m.Envelope == nil {
-				continue
-			}
-			env := m.Envelope
-			convert := func(a []*imap.Address) []mail.Address {
-				out := []mail.Address{}
-				for _, v := range a {
-					out = append(out, mail.Address{Name: DecodeHeader(v.PersonalName), Email: v.Address()})
-				}
-				return out
-			}
-			from := mail.Address{}
-			if v := convert(env.From); len(v) > 0 {
-				from = v[0]
-			}
-			meta := mail.Message{Key: mail.Key{Account: a.ID, Folder: f.Name, UID: m.Uid}, Subject: DecodeHeader(env.Subject), MessageID: env.MessageId, From: from, To: convert(env.To), CC: convert(env.Cc), Date: env.Date.Unix(), Size: m.Size, References: []string{}}
-			for _, v := range m.Flags {
-				switch strings.ToLower(v) {
-				case "\\seen":
-					meta.Flags.Seen = true
-				case "\\flagged":
-					meta.Flags.Flagged = true
-				case "\\answered":
-					meta.Flags.Answered = true
-				case "\\draft":
-					meta.Flags.Draft = true
-				case "\\deleted":
-					meta.Flags.Deleted = true
-				}
-			}
-			if !meta.Flags.Seen {
-				fr.Folder.Unread++
-			}
-			fr.Messages = append(fr.Messages, meta)
-		}
-		if e = <-done; e != nil {
-			return nil, e
-		}
-		n := int(prefetch)
-		if n > len(newIDs) {
-			n = len(newIDs)
-		}
-		total := 0
-		for _, uid := range newIDs[len(newIDs)-n:] {
-			raw, err := fetch(c, uid)
-			if err != nil {
-				return nil, err
-			}
-			total += len(raw)
-			if total > 200<<20 {
-				return nil, fmt.Errorf("单文件夹预取超过 200 MiB")
-			}
-			fr.Raw[uid] = raw
-		}
-		out = append(out, fr)
-	}
-	return out, nil
 }
 
 // fetch 使用 PEEK 下载原文，避免阅读前改变已读标记。
@@ -380,21 +203,84 @@ func moveSet(c *client.Client, set *imap.SeqSet, dest string) error {
 	return uidExpunge(c, set)
 }
 
-// MoveMany 在一个连接内把同一文件夹的多封邮件移到目标文件夹，避免逐封登录。
+// MoveMany 分批移动，MOVE 断线后最多重连一次并只重试源目录仍存在的 UID。
 func (Network) MoveMany(ctx context.Context, a mail.Account, p, folder string, uids []uint32, dest string) error {
-	c, close, e := dialIMAP(ctx, a, p)
-	if e != nil {
-		return e
+	if len(uids) == 0 {
+		return nil
 	}
-	defer close()
-	if _, e = c.Select(folder, false); e != nil {
-		return e
+	c, closeConn, err := dialIMAP(ctx, a, p)
+	if err != nil {
+		return err
 	}
-	for start := 0; start < len(uids); start += 500 {
+	status, err := c.Select(folder, false)
+	if err != nil {
+		closeConn()
+		return err
+	}
+	return moveManySelected(ctx, a, p, folder, uids, dest, c, closeConn, status.UidValidity)
+}
+
+// moveManySelected 复用已选中的连接，列表删除和文件夹删除使用相同的断线恢复规则。
+func moveManySelected(ctx context.Context, a mail.Account, p, folder string, uids []uint32, dest string, c *client.Client, closeConn func(), validity uint32) error {
+	defer func() {
+		if closeConn != nil {
+			closeConn()
+		}
+	}()
+	var err error
+	for start := 0; start < len(uids); start += 100 {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		batch := uids[start:min(start+100, len(uids))]
 		set := new(imap.SeqSet)
-		set.AddNum(uids[start:min(start+500, len(uids))]...)
-		if e = moveSet(c, set, dest); e != nil {
-			return e
+		set.AddNum(batch...)
+		supportsMove, _ := c.Support("MOVE")
+		err = moveSet(c, set, dest)
+		if err == nil {
+			continue
+		}
+		// COPY + STORE 回退无法确认复制阶段是否成功，不能重放；由引擎核对并显示剩余邮件。
+		var networkError net.Error
+		disconnected := c.State() == imap.LogoutState || err.Error() == "imap: connection closed" || errors.Is(err, io.EOF) || (errors.As(err, &networkError) && networkError.Timeout())
+		if !supportsMove || ctx.Err() != nil || !disconnected {
+			return err
+		}
+		closeConn()
+		c, closeConn, err = dialIMAP(ctx, a, p)
+		if err != nil {
+			return err
+		}
+		status, err := c.Select(folder, false)
+		if err != nil {
+			return err
+		}
+		if status.UidValidity != validity {
+			return fmt.Errorf("文件夹 UIDVALIDITY 已改变，请同步后重试")
+		}
+		criteria := imap.NewSearchCriteria()
+		criteria.Uid = set
+		remaining, searchErr := c.UidSearch(criteria)
+		if searchErr != nil {
+			return searchErr
+		}
+		if len(remaining) == 0 {
+			continue
+		}
+		retry := new(imap.SeqSet)
+		for _, uid := range remaining {
+			if set.Contains(uid) {
+				retry.AddNum(uid)
+			}
+		}
+		if len(retry.Set) > 0 {
+			// 只重试原子 MOVE，禁止重连后悄悄降级为可能重复复制的 COPY。
+			if ok, _ := c.Support("MOVE"); !ok {
+				return fmt.Errorf("重连后服务器不支持 MOVE，请同步后重试")
+			}
+			if err = c.UidMove(retry, dest); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -629,4 +515,58 @@ func validateServer(server mail.Server) error {
 	default:
 		return fmt.Errorf("服务器加密方式无效")
 	}
+}
+
+// ChangeFolder 在同一连接内处理服务器上的整个文件夹，包括尚未缓存的邮件；分批失败由调用方重新同步。
+func (Network) ChangeFolder(ctx context.Context, a mail.Account, p, folder, op, dest string) error {
+	if op != "seen" && op != "move" && op != "delete" {
+		return fmt.Errorf("未知文件夹操作")
+	}
+	if op == "move" && (dest == "" || dest == folder) {
+		return fmt.Errorf("移动目录无效")
+	}
+	c, close, err := dialIMAP(ctx, a, p)
+	if err != nil {
+		return err
+	}
+	defer close()
+	status, err := c.Select(folder, false)
+	if err != nil {
+		return err
+	}
+	ids, err := c.UidSearch(imap.NewSearchCriteria())
+	if err != nil {
+		return err
+	}
+	if len(ids) > 2000000 {
+		return fmt.Errorf("文件夹邮件过多")
+	}
+	if op == "move" {
+		return moveManySelected(ctx, a, p, folder, ids, dest, c, close, status.UidValidity)
+	}
+	if op == "delete" && len(ids) > 0 {
+		if ok, _ := c.Support("UIDPLUS"); !ok {
+			return fmt.Errorf("服务器不支持指定 UID 永久删除")
+		}
+	}
+	for start := 0; start < len(ids); start += 500 {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		set := new(imap.SeqSet)
+		set.AddNum(ids[start:min(start+500, len(ids))]...)
+		switch op {
+		case "seen":
+			err = c.UidStore(set, flagsOp(true), []interface{}{imap.SeenFlag}, nil)
+		case "delete":
+			err = c.UidStore(set, flagsOp(true), []interface{}{imap.DeletedFlag}, nil)
+			if err == nil {
+				err = uidExpunge(c, set)
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

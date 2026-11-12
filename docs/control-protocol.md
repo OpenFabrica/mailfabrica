@@ -3,30 +3,34 @@
 启动：`./dist/mailfabrica --demo --control 7981`。仅监听 `127.0.0.1`，每个 JSON 行请求得到一个 JSON 行响应：
 
 ```json
-{"id":1,"method":"engine.execute","params":{"command":"message.list","params":{"limit":20}}}
+{
+  "id": 1,
+  "method": "engine.execute",
+  "params": { "command": "message.list", "params": { "limit": 20 } }
+}
 ```
 
 成功为 `{id, ok:true, result}`，失败为 `{id, ok:false, error}`。`MAILFABRICA_CONTROL_PORT` 可设置默认端口。
 
-| 方法 | 作用 |
-| --- | --- |
-| `engine.execute {command, params}` | 执行稳定业务命令 |
-| `engine.commands {search?}` | 命令目录、参数说明和当前 enabled |
-| `engine.journal` | 脱敏命令历史，密码/API 密钥不会回显 |
-| `ui.inspect {window?}` | 会话、可见布局、对话框、阅读状态及协议能力 |
-| `ui.screenshot {path?, window?}` | 原生 WebView 生成 DOM PNG；不给路径时返回 base64 |
-| `ui.click {target? 或 x,y, count?, window?}` | 合成 DOM 点击，target 对应 `data-testid` |
-| `ui.text {text, window?}` | 为聚焦编辑区域输入内容 |
-| `ui.key {key, cmd?, ctrl?, alt?, shift?, window?}` | 合成按键 |
-| `ui.calendar {on?, month?, day?}` | 切换日历，支持月份/日期 |
-| `ui.readerMode {mode:"html" 或 "plain"}` | 阅读模式 |
-| `ui.readerReload {}` | 重载当前正文 |
-| `ui.readerScroll {top}` | 正文滚动，范围 0–200000 |
-| `ui.readerSelect {start,end}` | 按 Unicode 字符偏移选择正文 |
-| `ui.readerCopy {}` | 复制当前正文选区 |
-| `ui.readerHitTest {x,y}` | 查询正文局部坐标语义，不移动真实指针 |
-| `ui.focusWindow {}` | 显式聚焦主窗口 |
-| `app.quit {}` | 请求退出 |
+| 方法                                               | 作用                                             |
+| -------------------------------------------------- | ------------------------------------------------ |
+| `engine.execute {command, params}`                 | 执行稳定业务命令                                 |
+| `engine.commands {search?}`                        | 命令目录、参数说明和当前 enabled                 |
+| `engine.journal`                                   | 脱敏命令历史，密码/API 密钥不会回显              |
+| `ui.inspect {window?}`                             | 会话、可见布局、对话框、阅读状态及协议能力       |
+| `ui.screenshot {path?, window?}`                   | 原生 WebView 生成 DOM PNG；不给路径时返回 base64 |
+| `ui.click {target? 或 x,y, count?, window?}`       | 合成 DOM 点击，target 对应 `data-testid`         |
+| `ui.text {text, window?}`                          | 为聚焦编辑区域输入内容                           |
+| `ui.key {key, cmd?, ctrl?, alt?, shift?, window?}` | 合成按键                                         |
+| `ui.calendar {on?, month?, day?}`                  | 切换日历，支持月份/日期                          |
+| `ui.readerMode {mode:"html" 或 "plain"}`           | 阅读模式                                         |
+| `ui.readerReload {}`                               | 重载当前正文                                     |
+| `ui.readerScroll {top}`                            | 正文滚动，范围 0–200000                          |
+| `ui.readerSelect {start,end}`                      | 按 Unicode 字符偏移选择正文                      |
+| `ui.readerCopy {}`                                 | 复制当前正文选区                                 |
+| `ui.readerHitTest {x,y}`                           | 查询正文局部坐标语义，不移动真实指针             |
+| `ui.focusWindow {}`                                | 显式聚焦主窗口                                   |
+| `app.quit {}`                                      | 请求退出                                         |
 
 其他已注册命令 id 也可直接作为 method 使用。网络操作异步开始，轮询 `app.status.busy` 和 `message.get.state` 等结果；CLI/MCP 后端会等待适用任务完成。
 
@@ -34,6 +38,7 @@
 
 业务命令继续保留原 id、消息键及主要参数。UI 检查返回 `protocolVersion:2`、`backend:wails-webview` 和 `capabilities`，旧 egui GPU 矩形/光标字段不再伪造。
 
+- `ui.inspect.list` 返回中栏的 `scrollTop`、`viewportHeight`、`totalHeight` 与 `renderedRows`，用于观察虚拟窗口；完整邮件元数据仍在 `view` 中。
 - 三栏坐标是 WebView 客户端坐标。默认目标 `window:"main"`；写信窗口可显式指定 `window:"compose-<id>"`。
 - `ui.screenshot` 是 DOM 导出，返回 `backend:dom-without-email-body`、`includesEmailBody:false`，不包含隔离正文 iframe。完整正文视觉需浏览器或真实窗口截图。
 - `ui.drag` 不再模拟 egui 输入队列；正文选择使用 `ui.readerSelect`，真实拖选和悬停使用系统输入。

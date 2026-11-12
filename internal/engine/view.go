@@ -42,6 +42,8 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 			folders = append(folders, mail.Folder{Account: account, Path: name, Role: mail.FolderRole(name, nil), Selectable: true})
 			return s.Store.SetFolders(account, folders)
 		}, account)
+	case "folder.deleteMessages", "folder.junk":
+		return s.folderMessages(id, p)
 	case "folder.markAllRead":
 		account := str(p, "account")
 		folder := str(p, "folder")
@@ -50,6 +52,9 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 		}
 		if folder == "" {
 			folder = s.view.Scope.Folder
+		}
+		if account != "" && folder != "" {
+			return s.folderMessages(id, Params{"account": account, "folder": folder})
 		}
 		return s.markAllRead(account, folder)
 	case "view.scope":
@@ -104,22 +109,61 @@ func (s *Session) viewCommand(id string, p Params) (any, error) {
 			}
 			keys = append(keys, key)
 		}
-		if !boolean(p, "extend", false) {
-			s.view.Selected = []string{}
+
+		if len(keys) > 10000 {
+			return nil, fmt.Errorf("单次最多选择 10000 封邮件")
 		}
-		for _, k := range keys {
-			found := -1
-			for i, old := range s.view.Selected {
-				if old == k {
-					found = i
-					break
+		if !boolean(p, "open", true) {
+			visible := map[string]bool{}
+			for _, m := range s.view.Messages {
+				visible[m.Key.String()] = true
+			}
+			for _, key := range keys {
+				if !visible[key] {
+					return nil, fmt.Errorf("只能选择当前列表中的邮件")
 				}
 			}
-			if found >= 0 && boolean(p, "extend", false) {
-				s.view.Selected = append(s.view.Selected[:found], s.view.Selected[found+1:]...)
-			} else if found < 0 {
-				s.view.Selected = append(s.view.Selected, k)
+		}
+
+		selection := []string{}
+		if boolean(p, "extend", false) {
+			selection = append(selection, s.view.Selected...)
+		}
+		membership := map[string]bool{}
+		for _, key := range selection {
+			membership[key] = true
+		}
+		seen := map[string]bool{}
+		wanted, explicit := p["selected"].(bool)
+		for _, key := range keys {
+			if seen[key] {
+				continue
 			}
+			seen[key] = true
+			if explicit {
+				membership[key] = wanted
+			} else if boolean(p, "extend", false) {
+				membership[key] = !membership[key]
+			} else {
+				membership[key] = true
+			}
+		}
+		// 全选与主题组选择按键集合计算，避免大列表逐封线性查找产生平方耗时。
+		ordered := append(selection, keys...)
+		selection = []string{}
+		added := map[string]bool{}
+		for _, key := range ordered {
+			if membership[key] && !added[key] {
+				selection = append(selection, key)
+				added[key] = true
+			}
+		}
+		if len(selection) > 10000 {
+			return nil, fmt.Errorf("单次最多选择 10000 封邮件")
+		}
+		s.view.Selected = selection
+		if !boolean(p, "open", true) {
+			return nil, nil
 		}
 		oldGroup := s.view.Group
 		s.view.Group = nil
@@ -249,4 +293,63 @@ func (s *Session) markAllRead(account, folder string) (any, error) {
 		return nil, nil
 	}
 	return s.messageCommand("message.markRead", Params{"keys": keys, "read": true})
+}
+
+// folderMessages 对显式指定的可选文件夹批量处理，不依赖当前搜索、分页和选择。
+func (s *Session) folderMessages(id string, p Params) (any, error) {
+	account, err := required(p, "account")
+	if err != nil {
+		return nil, err
+	}
+	folder, err := required(p, "folder")
+	if err != nil {
+		return nil, err
+	}
+	a, err := s.account(account)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, f := range s.Store.Folders[account] {
+		if f.Path == folder && f.Selectable {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("文件夹不存在或不可选择")
+	}
+
+	op, dest := "seen", ""
+	if id == "folder.junk" || id == "folder.deleteMessages" {
+		role := "junk"
+		if id == "folder.deleteMessages" {
+			role = "trash"
+		}
+		dest, err = s.roleFolder(account, role)
+		if err != nil {
+			return nil, err
+		}
+		op = "move"
+		if dest == folder {
+			if id == "folder.junk" {
+				return nil, fmt.Errorf("邮件已在垃圾邮件文件夹中")
+			}
+			op = "delete"
+		}
+	}
+	password, err := s.secrets.Get(account)
+	if err != nil {
+		return nil, err
+	}
+	return nil, s.launch("folder.mutate:"+account, func(ctx context.Context) (any, error) {
+		// 将远端错误作为结果传回，使部分成功时仍能重新同步真实状态。
+		return s.remote.ChangeFolder(ctx, a, password, folder, op, dest), nil
+	}, func(result any) error {
+		_, syncErr := s.startSyncFolders(account, false, []string{folder, dest})
+		if remoteErr, ok := result.(error); ok {
+			return remoteErr
+		}
+		return syncErr
+	}, account)
 }

@@ -215,3 +215,74 @@ func (m *Memory) Send(ctx context.Context, _ mail.Account, _ string, out mail.Ou
 	}
 	return Build(out)
 }
+
+// ChangeFolder 先快照远端 UID，再复用演示服务器的变更语义，覆盖未缓存邮件。
+func (m *Memory) ChangeFolder(ctx context.Context, a mail.Account, p, folder, op, dest string) error {
+	if op != "seen" && op != "move" && op != "delete" {
+		return fmt.Errorf("未知文件夹操作")
+	}
+	if op == "move" && (dest == "" || dest == folder) {
+		return fmt.Errorf("移动目录无效")
+	}
+	m.mu.Lock()
+	uids := make([]uint32, 0, len(m.Messages[memoryKey(a.ID, folder)]))
+	for uid := range m.Messages[memoryKey(a.ID, folder)] {
+		uids = append(uids, uid)
+	}
+	m.mu.Unlock()
+	var value any = dest
+	if op == "seen" {
+		value = true
+	}
+	for _, uid := range uids {
+		if err := m.Change(ctx, a, p, mail.Key{Account: a.ID, Folder: folder, UID: uid}, op, value); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
+
+// SyncStream 让演示服务器走相同的头部、正文分阶段入口，并保留一次性 Sync 接口。
+func (m *Memory) SyncStream(ctx context.Context, a mail.Account, p string, o SyncOptions, emit func(SyncUpdate) error) ([]mail.Folder, error) {
+	results, err := m.Sync(ctx, a, p, o.Limit, o.Prefetch, o.Known)
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(results, func(i, j int) bool { return results[i].Folder.Role == "inbox" && results[j].Folder.Role != "inbox" })
+	folders := []mail.Folder{}
+	for _, fr := range results {
+		if o.InboxOnly && fr.Folder.Role != "inbox" {
+			continue
+		}
+		if len(o.FolderPaths) > 0 {
+			found := false
+			for _, path := range o.FolderPaths {
+				if path == fr.Folder.Path {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		raw := fr.Raw
+		fr.Raw = map[uint32][]byte{}
+		if err = emit(SyncUpdate{FolderResult: fr}); err != nil {
+			return nil, err
+		}
+		remaining := o.Prefetch
+		for i := len(fr.UIDs) - 1; i >= 0 && remaining > 0; i-- {
+			uid := fr.UIDs[i]
+			if _, ok := o.Known[fr.Folder.Path].Messages[uid]; ok {
+				continue
+			}
+			if err = emit(SyncUpdate{FolderResult: FolderResult{Folder: fr.Folder, Raw: map[uint32][]byte{uid: raw[uid]}}, BodyOnly: true}); err != nil {
+				return nil, err
+			}
+			remaining--
+		}
+		folders = append(folders, fr.Folder)
+	}
+	return folders, nil
+}

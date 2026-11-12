@@ -28,6 +28,7 @@ export async function performUI(method: string, p: Params) {
   switch (method) {
     case "ui.inspect": {
       const state = await snapshot();
+      const list = document.querySelector<HTMLElement>(".list-scroll");
       return {
         ...state,
         protocolVersion: 2,
@@ -43,6 +44,14 @@ export async function performUI(method: string, p: Params) {
           reader: rectangle(document.querySelector(".reader")),
           calendar: rectangle(document.querySelector(".calendar-main")),
         },
+        list: list
+          ? {
+              scrollTop: list.scrollTop,
+              viewportHeight: list.clientHeight,
+              totalHeight: list.scrollHeight,
+              renderedRows: list.querySelectorAll(".mail-row").length,
+            }
+          : null,
         dialog:
           document.querySelector("[role=dialog]")?.getAttribute("aria-label") ||
           null,
@@ -190,9 +199,11 @@ export async function performUI(method: string, p: Params) {
       return { queued: true };
     }
     case "ui.readerScroll": {
-      const { doc } = readerDocument();
-      doc.documentElement.scrollTop = boundedNumber(p, "top", 200000);
-      return { top: doc.documentElement.scrollTop };
+      const { frame, doc } = readerDocument();
+      const scroll = frame.closest(".email-frame") || doc.scrollingElement;
+      if (!scroll) throw new Error(t("邮件正文尚未加载"));
+      scroll.scrollTop = boundedNumber(p, "top", 200000);
+      return { top: scroll.scrollTop };
     }
     case "ui.readerSelect": {
       const { doc } = readerDocument();

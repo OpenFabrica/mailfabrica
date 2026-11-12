@@ -458,6 +458,24 @@
     "gate": "has_account"
   },
   {
+    "id": "folder.deleteMessages",
+    "label": "Delete All Messages",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account, folder}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
+    "id": "folder.junk",
+    "label": "Move All to Junk",
+    "menu": [],
+    "shortcut": null,
+    "params": "{account, folder}",
+    "query": false,
+    "gate": "has_account"
+  },
+  {
     "id": "invoice.export",
     "label": "Export Invoices…",
     "menu": [
@@ -737,7 +755,7 @@
     "label": "Select Messages",
     "menu": [],
     "shortcut": null,
-    "params": "{key} | {keys}, extend?",
+    "params": "{key} | {keys}, extend?, open?, selected?",
     "query": false,
     "gate": "always"
   },

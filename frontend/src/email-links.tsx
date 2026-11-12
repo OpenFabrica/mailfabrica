@@ -100,7 +100,10 @@ export function EmailLinks({
   }, [frame, loaded]);
   if (!nativeBridge) return null;
   return (
-    <div className="email-link-layer">
+    <div
+      className="email-link-layer"
+      style={{ height: frame.current?.offsetHeight }}
+    >
       {links.map((link) => (
         <a
           key={link.key}

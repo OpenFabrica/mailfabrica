@@ -208,3 +208,39 @@ func TestIncrementalSync(t *testing.T) {
 		t.Fatalf("unexpected incremental sync: %+v", second)
 	}
 }
+
+// TestNetworkChangeFolderSeen 验证真正 IMAP 的整目录已读覆盖同步窗口外的邮件，且不改变其它文件夹。
+func TestNetworkChangeFolderSeen(t *testing.T) {
+	a, remote := testIMAP(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	raw := []byte("From: a@example.com\r\nTo: b@example.com\r\nSubject: old uncached\r\n\r\nbody")
+	if err := remote.Append(ctx, a, "password", "INBOX", raw, nil); err != nil {
+		t.Fatal(err)
+	}
+	limited, err := remote.Sync(ctx, a, "password", 1, 0)
+	if err != nil || len(limited[0].Messages) != 1 {
+		t.Fatalf("limited sync: %v", err)
+	}
+	if err = remote.ChangeFolder(ctx, a, "password", "INBOX", "seen", ""); err != nil {
+		t.Fatal(err)
+	}
+	all, err := remote.Sync(ctx, a, "password", 500, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all[0].Messages) != 2 {
+		t.Fatal("messages lost")
+	}
+	for _, m := range all[0].Messages {
+		if !m.Flags.Seen {
+			t.Fatal("uncached message not marked read")
+		}
+	}
+	if err = remote.ChangeFolder(ctx, a, "password", "missing", "seen", ""); err == nil {
+		t.Fatal("missing folder accepted")
+	}
+	if err = remote.ChangeFolder(ctx, a, "password", "INBOX", "move", "INBOX"); err == nil {
+		t.Fatal("self move accepted")
+	}
+}

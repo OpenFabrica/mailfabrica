@@ -1,3 +1,4 @@
+import { MailBodyLoading } from "./mail-body-loading";
 import { t } from "./i18n";
 import { MailTranslation } from "./translation";
 import { Fragment, useEffect, useRef, useState } from "react";
@@ -8,10 +9,8 @@ import {
   Download,
   Flag,
   History,
-  Inbox,
   LoaderCircle,
   MoreHorizontal,
-  Paperclip,
   Reply,
   ReplyAll,
   Send,
@@ -27,244 +26,12 @@ import { EmailContent, useEmailTheme } from "./email-content";
 import type { ContactIdentity } from "./contact-timeline";
 import { useDismiss } from "./use-dismiss";
 import { ReaderLanding, type LandingActions } from "./reader-landing";
-import { keyString, type Row } from "./types";
+import { keyString } from "./types";
 import {
   ConversationSummary,
   ConversationToolbar,
   SummaryResult,
 } from "./conversation";
-// RowItem 保留多选、未读、红旗、主题组与附件的可见反馈。
-function RowItem({
-  row,
-  selected,
-  english,
-  compact,
-  onSelect,
-}: {
-  row: Row;
-  selected: boolean;
-  english: boolean;
-  compact: boolean;
-  onSelect: (extend: boolean) => void;
-}) {
-  const m = row.message;
-  const countLabel = english
-    ? `${row.unread} unread / ${row.count} total`
-    : `${row.unread} 封未读 / 共 ${row.count} 封`;
-  return (
-    <button
-      className={`mail-row ${selected ? "selected" : ""} ${row.unread ? "unread" : ""}`}
-      aria-pressed={selected}
-      data-testid={`list.row.${keyString(m.key)}`}
-      onClick={(e) => onSelect(e.metaKey || e.ctrlKey)}
-    >
-      <span className={`unread-dot ${row.unread ? "on" : ""}`} />
-      <div className="row-content">
-        <div className="row-top">
-          <span className="sender">
-            <span className="sender-name">{m.from.name || m.from.email}</span>
-            {row.count > 1 && (
-              <span
-                className="count"
-                title={countLabel}
-                aria-label={countLabel}
-              >
-                {row.unread}/{row.count}
-              </span>
-            )}
-          </span>
-          <time>{dateLabel(m.date, english)}</time>
-        </div>
-        <div className="row-subject">
-          <span>
-            {m.subject || (english ? "(No subject)" : t("（无主题）"))}
-          </span>
-          <span className="row-indicators">
-            {row.flagged && <Flag size={12} className="flagged" />}
-            {compact && m.hasAttachments && <Paperclip size={12} />}
-          </span>
-        </div>
-        {!compact && (
-          <div className="row-preview">
-            <span>
-              {m.preview ||
-                (english ? "Open to download message" : t("打开查看邮件内容"))}
-            </span>
-            {m.hasAttachments && <Paperclip size={12} />}
-          </div>
-        )}
-      </div>
-    </button>
-  );
-}
-// dateGroup 用日历日期分组，保持 Foxmail 式紧凑列表的扫描顺序。
-function dateGroup(timestamp: number) {
-  const date = new Date(timestamp * 1000),
-    now = new Date();
-  const day = (d: Date) =>
-    Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
-  const age = day(now) - day(date);
-  if (age === 0) return "今天";
-  if (age === 1) return "昨天";
-  if (age >= 0 && age <= (now.getDay() + 6) % 7) return "本周";
-  if (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth()
-  )
-    return "本月";
-  return "更早";
-}
-// MailList 提供分组列表和同一后端搜索范围。
-export function MailList({
-  ui,
-  onCompose,
-  onJunk,
-}: {
-  ui: SessionUI;
-  onCompose: () => void;
-  onJunk: () => void;
-}) {
-  const { state, run } = ui;
-  const [menu, setMenu] = useState(false);
-  const menuRoot = useDismiss(menu, () => setMenu(false));
-  if (!state) return null;
-  const en = state.prefs.language === "en";
-  const titles: Record<string, string> = en
-    ? {
-        allInboxes: "All inboxes",
-        unread: "Unread",
-        flagged: "Flagged",
-        invoices: "Invoices",
-      }
-    : {
-        allInboxes: t("全部收件箱"),
-        unread: t("未读邮件"),
-        flagged: t("红旗邮件"),
-        invoices: t("发票"),
-      };
-  const compact = state.prefs.mailListDensity !== "comfortable";
-  const scope = state.view.scope;
-  const title = titles[scope.kind] || scope.folder || "";
-  return (
-    <section
-      className={`mail-list ${compact ? "compact" : "comfortable"}`}
-      aria-label={en ? "Message list" : t("邮件列表")}
-    >
-      <header className="pane-heading">
-        <h1>
-          {title}
-          <span>{state.view.messages.length}</span>
-        </h1>
-        <div className="relative" ref={menuRoot}>
-          <button
-            className="text-button muted"
-            aria-expanded={menu}
-            data-testid="list.viewMenu"
-            onClick={() => setMenu(!menu)}
-          >
-            {en ? "By date" : t("按时间排序")}
-            <ChevronDown size={13} />
-          </button>
-          {menu && (
-            <div className="popup-menu">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={Boolean(state.prefs.groupBySubject)}
-                  onChange={(e) => {
-                    void run("app.prefs", { groupBySubject: e.target.checked });
-                    setMenu(false);
-                  }}
-                />
-                {en ? "Group by subject" : t("按主题归类")}
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={compact}
-                  onChange={(e) => {
-                    void run("app.prefs", {
-                      mailListDensity: e.target.checked
-                        ? "compact"
-                        : "comfortable",
-                    });
-                    setMenu(false);
-                  }}
-                />
-                {t("紧凑列表")}
-              </label>
-              <button
-                onClick={() => {
-                  void run("folder.markAllRead", {});
-                  setMenu(false);
-                }}
-              >
-                {en ? "Mark all as read" : t("全部标为已读")}
-              </button>
-              <button
-                data-testid="list.junk"
-                onClick={() => {
-                  onJunk();
-                  setMenu(false);
-                }}
-              >
-                {t("AI 清理垃圾邮件")}
-              </button>
-            </div>
-          )}
-        </div>
-      </header>
-      <div className="list-scroll">
-        {state.view.rows.map((row, index) => {
-          const bucket = dateGroup(row.message.date);
-          const showDate =
-            index === 0 ||
-            dateGroup(state.view.rows[index - 1].message.date) !== bucket;
-          return (
-            <Fragment key={row.keys[0]}>
-              {showDate && <div className="date-group">{t(bucket)}</div>}
-              <RowItem
-                row={row}
-                compact={compact}
-                english={en}
-                selected={row.keys.some((k) => state.view.selected.includes(k))}
-                onSelect={(extend) => {
-                  void run(
-                    row.group && !extend ? "view.selectGroup" : "view.select",
-                    row.group && !extend
-                      ? { group: row.group }
-                      : { key: row.keys[0], extend },
-                  );
-                }}
-              />
-            </Fragment>
-          );
-        })}
-        {state.view.rows.length === 0 && (
-          <div className="empty">
-            <Inbox />
-            <p>{en ? "No messages here" : t("这里还没有邮件")}</p>
-            <button onClick={onCompose}>
-              {en ? "Write a message" : t("写一封邮件")}
-            </button>
-          </div>
-        )}
-      </div>
-      <footer className="list-footer">
-        {state.status.busy ? (
-          <>
-            <LoaderCircle className="spin" size={12} />
-            {en ? "Working…" : t("正在处理…")}
-          </>
-        ) : en ? (
-          `${state.view.messages.length} messages`
-        ) : (
-          `共 ${state.view.messages.length} 封邮件`
-        )}
-      </footer>
-    </section>
-  );
-}
 // Reader 呈现主题组、单封阅读及快速回复，所有修改经 run。
 export function Reader({
   ui,
@@ -309,6 +76,15 @@ export function Reader({
   const body = state?.message?.body;
   if (!state) return null;
   const en = state.prefs.language === "en";
+  if (ui.openingMessage)
+    return (
+      <section
+        className="reader"
+        aria-label={en ? "Reading pane" : t("阅读窗格")}
+      >
+        <MailBodyLoading />
+      </section>
+    );
   const conversation = state.view.group
     ? state.view.rows.find((r) => r.group === state.view.group && r.count > 1)
     : undefined;
@@ -615,12 +391,7 @@ export function Reader({
         </div>
       </header>
       <div className="reader-content">
-        {state.message.state === "loading" && (
-          <div className="empty">
-            <LoaderCircle className="spin" />
-            {en ? "Downloading…" : t("正在下载正文…")}
-          </div>
-        )}
+        {state.message.state === "loading" && <MailBodyLoading />}
         {state.message.state === "failed" && (
           <div className="inline-error">
             {state.message.error}
@@ -638,6 +409,8 @@ export function Reader({
         )}
         {body && (
           <EmailContent
+            key={`body:${currentKey}`}
+            showLoading
             title={en ? "Email content" : t("邮件正文")}
             html={plain ? null : body.html}
             text={body.text}

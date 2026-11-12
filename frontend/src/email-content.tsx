@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { MailBodyLoading } from "./mail-body-loading";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Body } from "./types";
 import { t } from "./i18n";
 import { openExternal } from "./api";
@@ -64,7 +65,7 @@ export function emailDocument(
     })
     .join("");
   const csp = `default-src 'none'; img-src data: ${remoteImages ? "https: http:" : ""}; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'`;
-  return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{color-scheme:${dark ? "dark" : "light"}}body{margin:0;padding:4px 0 20px;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:${dark ? "#ededf1" : "#34343e"};overflow-wrap:anywhere}p{margin:0 0 10px}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap;font:inherit}blockquote{border-left:2px solid #d8d8e3;margin-left:0;padding-left:18px;color:#73737e}a{color:#4f46e5}${quoted ? `[data-mf-quote]>blockquote{margin:12px 0 0;padding:0;border:0;color:inherit}[data-mf-quote]>p:first-child{font-size:12px;color:${dark ? "#aaaabb" : "#73737e"}}` : ""}</style>${styles}</head><body>${doc.body.innerHTML}</body></html>`;
+  return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html{color-scheme:${dark ? "dark" : "light"}}body{margin:0;padding:4px 0 20px;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:${dark ? "#ededf1" : "#34343e"};overflow-wrap:anywhere}p{margin:0 0 10px}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap;font:inherit}blockquote{border-left:2px solid #d8d8e3;margin-left:0;padding-left:18px;color:#73737e}a{color:#4f46e5}${quoted ? `[data-mf-quote]>blockquote{margin:12px 0 0;padding:0;border:0;color:inherit}[data-mf-quote]>p:first-child{font-size:12px;color:${dark ? "#aaaabb" : "#73737e"}}` : ""}</style>${styles}${quoted ? "" : "<style>html,body{height:auto!important;min-height:0!important;overflow-y:hidden!important}</style>"}</head><body data-mf-body="ready">${doc.body.innerHTML}</body></html>`;
 }
 // useEmailTheme 让阅读正文与引用预览使用同一系统主题判断。
 export function useEmailTheme(theme: unknown) {
@@ -89,6 +90,7 @@ export function EmailContent({
   dark,
   quoted = false,
   onLinkError,
+  showLoading = false,
 }: {
   html: string | null;
   text: string;
@@ -97,75 +99,109 @@ export function EmailContent({
   dark: boolean;
   quoted?: boolean;
   onLinkError?: (message: string) => void;
+  showLoading?: boolean;
 }) {
   const cleanup = useRef<(() => void) | undefined>(undefined);
   const frame = useRef<HTMLIFrameElement>(null);
+  const preparedDocument = useRef<Document | null>(null);
   const [loaded, setLoaded] = useState(0);
   const [height, setHeight] = useState(180);
+  const [readySource, setReadySource] = useState<string | null>(null);
   const source = useMemo(
     () => emailDocument({ html, text }, remoteImages, dark, quoted),
     [html, text, remoteImages, dark, quoted],
   );
+  // prepareDocument 在 DOM 就绪时建立链接代理和尺寸监听，不等待远程图片。
+  const prepareDocument = useCallback(
+    (doc: Document) => {
+      if (!doc.body || doc.body.dataset.mfBody !== "ready") return;
+      if (showLoading) setReadySource(source);
+      if (preparedDocument.current === doc) return;
+      cleanup.current?.();
+      preparedDocument.current = doc;
+      if (frame.current?.parentElement)
+        frame.current.parentElement.scrollTop = 0;
+      setLoaded((value) => value + 1);
+      // 正文没有脚本权限；由宿主监听链接点击并交给系统浏览器，不让 iframe 自行开新窗口。
+      const navigate = (event: MouseEvent) => {
+        const anchor = (event.target as Element | null)?.closest?.("a[href]");
+        if (!anchor) return;
+        const raw = anchor.getAttribute("href")?.trim() || "";
+        if (raw.startsWith("#")) return;
+        event.preventDefault();
+        if (event.type === "auxclick" && event.button !== 1) return;
+        const url = emailLink(raw);
+        if (!url) {
+          onLinkError?.(t("已阻止不安全链接"));
+          return;
+        }
+        void openExternal(url).catch(() => onLinkError?.(t("无法打开链接")));
+      };
+      doc.addEventListener("click", navigate, true);
+      doc.addEventListener("auxclick", navigate, true);
+      let observer: ResizeObserver | undefined;
+      const resize = () => {
+        const measured =
+          Math.ceil(doc.body.getBoundingClientRect().height) +
+          (quoted ? 24 : 0);
+        setHeight(Math.max(160, quoted ? Math.min(10000, measured) : measured));
+      };
+      // iframe 随正文撑开，由外层接收滚轮，避开 WebKit 禁脚本文档的嵌套滚动问题。
+      observer = new ResizeObserver(resize);
+      observer.observe(doc.body);
+      resize();
+      cleanup.current = () => {
+        observer?.disconnect();
+        doc.removeEventListener("click", navigate, true);
+        doc.removeEventListener("auxclick", navigate, true);
+      };
+    },
+    [source, showLoading, quoted, onLinkError],
+  );
   useEffect(() => () => cleanup.current?.(), []);
+  useEffect(() => {
+    if (!showLoading) return;
+    let request = 0;
+    const check = () => {
+      const doc = frame.current?.contentDocument;
+      // DOM 排版可用后即显示，不等待慢速远程图片触发 iframe load。
+      if (doc?.body?.dataset.mfBody === "ready" && doc.readyState !== "loading")
+        prepareDocument(doc);
+      else request = requestAnimationFrame(check);
+    };
+    request = requestAnimationFrame(check);
+    return () => cancelAnimationFrame(request);
+  }, [source, showLoading, prepareDocument]);
+  const loading = showLoading && readySource !== source;
   return (
-    <div className={`email-frame ${quoted ? "quoted" : ""}`}>
+    <div
+      className={`email-frame ${quoted ? "quoted" : ""}`}
+      aria-busy={loading}
+    >
+      {loading && <MailBodyLoading />}
       <iframe
+        key={`frame:${source}`}
         ref={frame}
+        aria-hidden={loading}
         title={title}
         sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
         srcDoc={source}
-        style={quoted ? { height } : undefined}
+        style={{
+          height,
+          visibility: loading ? "hidden" : undefined,
+        }}
         onLoad={(event) => {
-          cleanup.current?.();
           const doc = event.currentTarget.contentDocument;
-          if (!doc?.body) return;
-          setLoaded((value) => value + 1);
-          // 正文没有脚本权限；由宿主监听链接点击并交给系统浏览器，不让 iframe 自行开新窗口。
-          const navigate = (event: MouseEvent) => {
-            const anchor = (event.target as Element | null)?.closest?.(
-              "a[href]",
-            );
-            if (!anchor) return;
-            const raw = anchor.getAttribute("href")?.trim() || "";
-            if (raw.startsWith("#")) return;
-            event.preventDefault();
-            if (event.type === "auxclick" && event.button !== 1) return;
-            const url = emailLink(raw);
-            if (!url) {
-              onLinkError?.(t("已阻止不安全链接"));
-              return;
-            }
-            void openExternal(url).catch(() =>
-              onLinkError?.(t("无法打开链接")),
-            );
-          };
-          doc.addEventListener("click", navigate, true);
-          doc.addEventListener("auxclick", navigate, true);
-          let observer: ResizeObserver | undefined;
-          const resize = () =>
-            setHeight(
-              Math.max(
-                160,
-                Math.min(
-                  10000,
-                  Math.ceil(doc.body.getBoundingClientRect().height) + 24,
-                ),
-              ),
-            );
-          if (quoted) {
-            observer = new ResizeObserver(resize);
-            observer.observe(doc.body);
-            resize();
-          }
-          cleanup.current = () => {
-            observer?.disconnect();
-            doc.removeEventListener("click", navigate, true);
-            doc.removeEventListener("auxclick", navigate, true);
-          };
+          if (doc) prepareDocument(doc);
         }}
       />
-      <EmailLinks frame={frame} loaded={loaded} onError={onLinkError} />
+      <EmailLinks
+        key={`links:${source}`}
+        frame={frame}
+        loaded={loaded}
+        onError={onLinkError}
+      />
     </div>
   );
 }
